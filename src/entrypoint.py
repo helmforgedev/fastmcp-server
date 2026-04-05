@@ -187,40 +187,48 @@ def main() -> None:
     path = os.environ.get("MCP_PATH", "/mcp")
     app = mcp.http_app(path=path)
 
-    # Add health endpoints
+    # Derive base path for mounting related routes
+    # e.g. /helmforge/mcp -> /helmforge, /mcp -> ""
+    base_path = path.rsplit("/", 1)[0]
+
+    # Health probes at root (accessed by kubelet, not through ingress)
     app.routes.insert(0, Route("/healthz", healthz))
     app.routes.insert(0, Route("/readyz", readyz))
     app.routes.insert(0, Route("/startupz", startupz))
 
-    # Add diagnostic endpoint
-    app.routes.insert(0, Route("/debug/info", debug_info))
+    # Diagnostic endpoint under base path
+    app.routes.insert(0, Route(f"{base_path}/debug/info", debug_info))
 
-    # Add API endpoints for UI
-    app.routes.insert(0, Route("/api/info", api_info))
-    app.routes.insert(0, Route("/api/tools", api_tools))
-    app.routes.insert(0, Route("/api/resources", api_resources))
-    app.routes.insert(0, Route("/api/prompts", api_prompts))
+    # API endpoints for UI under base path
+    app.routes.insert(0, Route(f"{base_path}/api/info", api_info))
+    app.routes.insert(0, Route(f"{base_path}/api/tools", api_tools))
+    app.routes.insert(0, Route(f"{base_path}/api/resources", api_resources))
+    app.routes.insert(0, Route(f"{base_path}/api/prompts", api_prompts))
 
-    # Add UI static files if enabled
+    # UI static files under base path
     ui_enabled = os.environ.get("MCP_UI_ENABLED", "true").lower() == "true"
     if ui_enabled:
         ui_dir = os.path.join(os.path.dirname(__file__), "ui")
         if os.path.isdir(ui_dir):
             from starlette.staticfiles import StaticFiles
 
-            app.routes.append(Mount("/ui", StaticFiles(directory=ui_dir, html=True)))
-            logger.info("Web UI enabled at /ui")
+            ui_path = f"{base_path}/ui"
+            app.routes.append(Mount(ui_path, StaticFiles(directory=ui_dir, html=True)))
+            logger.info("Web UI enabled at %s", ui_path)
 
-    # Add reload endpoint
+    # Reload endpoint under base path
     init_reload(mcp, workspace, sync_sources, rebuild_components)
-    app.routes.insert(0, Route("/reload", reload_endpoint, methods=["POST"]))
+    app.routes.insert(
+        0, Route(f"{base_path}/reload", reload_endpoint, methods=["POST"])
+    )
 
-    # Add metrics endpoint if enabled
+    # Metrics endpoint under base path
     if metrics_enabled():
         from metrics import get_metrics_app
 
-        app.routes.append(Mount("/metrics", get_metrics_app()))
-        logger.info("Metrics endpoint enabled at /metrics")
+        metrics_path = f"{base_path}/metrics"
+        app.routes.append(Mount(metrics_path, get_metrics_app()))
+        logger.info("Metrics endpoint enabled at %s", metrics_path)
 
     # Step 9: Start hot reload watcher if enabled
     start_watcher(mcp, workspace, rebuild_components)
