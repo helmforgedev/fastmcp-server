@@ -19,7 +19,7 @@ EOF
 docker run -d \
   -p 8000:8000 \
   -v $(pwd)/tools:/app/inline/tools \
-  docker.io/helmforge/fastmcp-server:0.1.0
+  docker.io/helmforge/fastmcp-server:0.2.0
 ```
 
 Your MCP server is now available at `http://localhost:8000/mcp`.
@@ -59,7 +59,7 @@ All sources can be combined. Inline always wins on conflicts.
 ```yaml
 services:
   mcp-server:
-    image: docker.io/helmforge/fastmcp-server:0.1.0
+    image: docker.io/helmforge/fastmcp-server:0.2.0
     ports:
       - "8000:8000"
     volumes:
@@ -83,7 +83,7 @@ services:
 ```yaml
 services:
   mcp-server:
-    image: docker.io/helmforge/fastmcp-server:0.1.0
+    image: docker.io/helmforge/fastmcp-server:0.2.0
     ports:
       - "8000:8000"
     environment:
@@ -112,7 +112,7 @@ docker run -d \
   -e SOURCE_GIT_ENABLED=true \
   -e SOURCE_GIT_REPOSITORY=https://github.com/myorg/mcp-tools.git \
   -e SOURCE_GIT_BRANCH=main \
-  docker.io/helmforge/fastmcp-server:0.1.0
+  docker.io/helmforge/fastmcp-server:0.2.0
 ```
 
 For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
@@ -133,6 +133,52 @@ def roll_dice(sides: int = 6) -> int:
     return random.randint(1, sides)
 ```
 
+### Tool Metadata
+
+Add optional module-level variables to control tool registration:
+
+```python
+__tags__ = {"devops", "production"}        # Categorization tags
+__timeout__ = 30.0                          # Execution timeout (seconds)
+__annotations_mcp__ = {                     # MCP behavior hints
+    "destructiveHint": True,
+    "title": "Deploy Service"
+}
+
+def deploy(service: str, version: str) -> str:
+    """Deploy a service to production."""
+    return f"Deployed {service}@{version}"
+```
+
+### Async Tools
+
+Both `async def` and `def` functions work. Async is preferred for I/O-bound operations:
+
+```python
+async def fetch_url(url: str) -> str:
+    """Fetch content from a URL."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.text
+```
+
+### Structured Output
+
+Return `ToolResult` for full control over response format:
+
+```python
+from fastmcp.tools.tool import ToolResult
+
+def analyze(data: str) -> ToolResult:
+    """Analyze data with structured output."""
+    return ToolResult(
+        content="Analysis complete",
+        structured_content={"word_count": len(data.split())},
+        meta={"version": "1.0"}
+    )
+```
+
 ## Writing Resources
 
 Create a `.py` file in `resources/` with a `RESOURCE_URI` constant and a handler function:
@@ -143,6 +189,35 @@ RESOURCE_URI = "config://app"
 def get_config() -> dict:
     """Application configuration."""
     return {"version": "1.0", "env": "production"}
+```
+
+### Resource Templates
+
+Use `{param}` placeholders in URIs for parameterized resources:
+
+```python
+RESOURCE_URI = "users://{user_id}/profile"
+
+def get_profile(user_id: str) -> dict:
+    """Get user profile by ID."""
+    return {"user_id": user_id, "name": f"User {user_id}"}
+```
+
+### Multiple Resources per File
+
+Use a `RESOURCES` dict to register multiple resources from one file:
+
+```python
+RESOURCES = {
+    "status://health": "get_health",
+    "status://version": "get_version",
+}
+
+def get_health() -> dict:
+    return {"status": "ok"}
+
+def get_version() -> str:
+    return "1.0.0"
 ```
 
 ## Writing Prompts
@@ -190,6 +265,9 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | `MCP_PATH` | `/mcp` | HTTP endpoint path |
 | `MCP_WORKSPACE` | `/app/workspace` | Workspace directory |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `MCP_MASK_ERROR_DETAILS` | `false` | Hide internal error details from clients |
+| `MCP_ON_DUPLICATE_TOOLS` | `warn` | Duplicate handling: `warn`, `error`, `replace`, `ignore` |
+| `EXTRA_PIP_PACKAGES` | | Comma-separated pip packages to install at startup |
 
 ### Authentication
 
