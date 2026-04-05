@@ -61,16 +61,16 @@ def _build_auth():
     auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
 
     if auth_type == "bearer":
-        from fastmcp.server.auth import BearerTokenAuth
+        from fastmcp.server.auth import StaticTokenVerifier
 
         token = os.environ.get("MCP_AUTH_TOKEN", "")
         if not token:
             logger.warning("Bearer auth enabled but MCP_AUTH_TOKEN not set")
             return None
-        return BearerTokenAuth(token=token)
+        return StaticTokenVerifier(tokens={token: {"sub": "bearer-user"}})
 
     if auth_type == "jwt":
-        from fastmcp.server.auth import JWTAuth
+        from fastmcp.server.auth import JWTVerifier
 
         kwargs = {}
         issuer = os.environ.get("MCP_AUTH_JWT_ISSUER")
@@ -82,7 +82,7 @@ def _build_auth():
             kwargs["audience"] = audience
         if jwks_uri:
             kwargs["jwks_uri"] = jwks_uri
-        return JWTAuth(**kwargs)
+        return JWTVerifier(**kwargs)
 
     if auth_type != "none":
         logger.warning("Unknown auth type '%s', running without auth", auth_type)
