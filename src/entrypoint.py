@@ -22,10 +22,13 @@ from health import (
     readyz,
     startupz,
 )
+from hot_reload import start_watcher
 from loader import sync_sources
 from logging_config import configure_logging
 from metrics import init_metrics, is_enabled as metrics_enabled, set_component_counts
-from server_builder import build_server
+from periodic_sync import start_periodic_sync
+from reload_endpoint import init_reload, reload_endpoint
+from server_builder import build_server, rebuild_components
 
 # Configure logging first
 configure_logging()
@@ -187,6 +190,10 @@ def main() -> None:
             app.routes.append(Mount("/ui", StaticFiles(directory=ui_dir, html=True)))
             logger.info("Web UI enabled at /ui")
 
+    # Add reload endpoint
+    init_reload(mcp, workspace, sync_sources, rebuild_components)
+    app.routes.insert(0, Route("/reload", reload_endpoint, methods=["POST"]))
+
     # Add metrics endpoint if enabled
     if metrics_enabled():
         from metrics import get_metrics_app
@@ -194,7 +201,13 @@ def main() -> None:
         app.routes.append(Mount("/metrics", get_metrics_app()))
         logger.info("Metrics endpoint enabled at /metrics")
 
-    # Step 9: Mark startup complete
+    # Step 9: Start hot reload watcher if enabled
+    start_watcher(mcp, workspace, rebuild_components)
+
+    # Step 10: Start periodic sync if configured
+    start_periodic_sync(workspace, sync_sources, rebuild_components, mcp)
+
+    # Step 11: Mark startup complete
     mark_startup_complete()
 
     # Step 10: Setup graceful shutdown
