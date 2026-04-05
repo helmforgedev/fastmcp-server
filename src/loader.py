@@ -12,7 +12,6 @@ Files are synced into the workspace directory organized by type:
   workspace/knowledge/*
 """
 
-import json
 import logging
 import os
 import shutil

@@ -1,6 +1,8 @@
 .git
 .github
 .dockerignore
+.release-please-manifest.json
+release-please-config.json
 README.md
 LICENSE
-*.md
+version.txt
