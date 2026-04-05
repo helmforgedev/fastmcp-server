@@ -36,7 +36,13 @@ def _is_cache_enabled() -> bool:
 def _make_cache_key(args: tuple, kwargs: dict) -> str:
     """Create a deterministic cache key from function arguments."""
     try:
-        key_data = json.dumps({"a": [repr(a) for a in args], "k": {k: repr(v) for k, v in sorted(kwargs.items())}}, sort_keys=True)
+        key_data = json.dumps(
+            {
+                "a": [repr(a) for a in args],
+                "k": {k: repr(v) for k, v in sorted(kwargs.items())},
+            },
+            sort_keys=True,
+        )
     except (TypeError, ValueError):
         key_data = repr((args, kwargs))
     return hashlib.md5(key_data.encode()).hexdigest()
@@ -67,7 +73,9 @@ def _set_cached(tool_name: str, key: str, value: object) -> None:
     with _locks[tool_name]:
         # Evict oldest if over limit
         if len(_caches[tool_name]) >= MAX_CACHE_SIZE:
-            oldest_key = min(_caches[tool_name], key=lambda k: _caches[tool_name][k]["time"])
+            oldest_key = min(
+                _caches[tool_name], key=lambda k: _caches[tool_name][k]["time"]
+            )
             del _caches[tool_name][oldest_key]
 
         _caches[tool_name][key] = {"value": value, "time": time.monotonic()}

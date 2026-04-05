@@ -60,7 +60,9 @@ def _parse_rate(rate_str: str) -> tuple[int, float] | None:
     return (count, window)
 
 
-def _get_rate_for_tool(tool_name: str, module_rate: str | None = None) -> tuple[int, float] | None:
+def _get_rate_for_tool(
+    tool_name: str, module_rate: str | None = None
+) -> tuple[int, float] | None:
     """Determine rate limit for a tool (env override > module-level > global default)."""
     # Per-tool env override: MCP_RATE_LIMIT_<TOOL_NAME_UPPER>
     env_key = f"MCP_RATE_LIMIT_{tool_name.upper()}"
@@ -118,7 +120,12 @@ def rate_limit_tool(
         return func
 
     max_count, window_seconds = rate
-    logger.debug("Rate limiting tool '%s': %d calls per %.0fs", tool_name, max_count, window_seconds)
+    logger.debug(
+        "Rate limiting tool '%s': %d calls per %.0fs",
+        tool_name,
+        max_count,
+        window_seconds,
+    )
 
     @functools.wraps(func)
     def sync_wrapper(*args, **kwargs):

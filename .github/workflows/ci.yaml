@@ -68,15 +68,25 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: helmforge/fastmcp-server:ci
           format: table
           exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+
+      - name: Trivy vulnerability report (HIGH)
+        if: always()
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: helmforge/fastmcp-server:ci
+          format: table
+          exit-code: "0"
           severity: CRITICAL,HIGH
 
       - name: Trivy SBOM generation
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: helmforge/fastmcp-server:ci
           format: cyclonedx

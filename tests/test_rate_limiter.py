@@ -67,6 +67,7 @@ def test_rate_limit_async():
 def test_rate_limit_env_override():
     os.environ["MCP_RATE_LIMIT_ENVTOOL"] = "1/s"
     try:
+
         def my_tool() -> str:
             return "ok"
 
