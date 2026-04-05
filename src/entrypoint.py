@@ -136,6 +136,14 @@ def main() -> None:
     # Step 2: Install extra pip packages if requested
     _install_extra_packages()
 
+    # Step 2b: Auto-discover and install pip tool packages
+    from package_discovery import discover_tool_packages, install_discovered_tools
+
+    discovered_packages = discover_tool_packages()
+    if discovered_packages:
+        pkg_count = install_discovered_tools(workspace, discovered_packages)
+        logger.info("Auto-installed %d tools from pip packages", pkg_count)
+
     # Step 3: Sync external sources (S3, Git, Inline) into workspace
     try:
         sync_sources(workspace)
