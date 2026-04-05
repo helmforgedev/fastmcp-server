@@ -12,7 +12,6 @@ Files are synced into the workspace directory organized by type:
   workspace/knowledge/*
 """
 
-import json
 import logging
 import os
 import shutil
@@ -72,7 +71,9 @@ def _sync_git(workspace: Path) -> None:
     if clone_dir.exists():
         shutil.rmtree(clone_dir)
 
-    logger.info("Cloning %s (branch: %s)...", os.environ.get("SOURCE_GIT_REPOSITORY"), branch)
+    logger.info(
+        "Cloning %s (branch: %s)...", os.environ.get("SOURCE_GIT_REPOSITORY"), branch
+    )
     repo = git.Repo.clone_from(repo_url, str(clone_dir), branch=branch, depth=1)
     logger.info("Git clone complete: %s", repo.head.commit.hexsha[:8])
 
@@ -122,7 +123,7 @@ def _sync_s3(workspace: Path) -> None:
         for obj in page.get("Contents", []):
             key = obj["Key"]
             # Strip prefix to get relative path
-            rel_path = key[len(prefix):].lstrip("/") if prefix else key
+            rel_path = key[len(prefix) :].lstrip("/") if prefix else key
             if not rel_path or rel_path.endswith("/"):
                 continue
 

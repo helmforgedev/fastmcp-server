@@ -11,7 +11,6 @@ Directory structure expected:
 """
 
 import importlib.util
-import json
 import logging
 import os
 import sys
@@ -123,7 +122,11 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> None:
             if name.startswith("_"):
                 continue
             obj = getattr(module, name)
-            if callable(obj) and isinstance(obj, types.FunctionType) and name != "RESOURCE_URI":
+            if (
+                callable(obj)
+                and isinstance(obj, types.FunctionType)
+                and name != "RESOURCE_URI"
+            ):
                 mcp.resource(resource_uri)(obj)
                 logger.info("Registered resource: %s -> %s", resource_uri, name)
                 break
@@ -164,6 +167,7 @@ def _load_knowledge(mcp: FastMCP, knowledge_dir: Path) -> None:
         def _make_reader(fp: Path):
             def read_file() -> str:
                 return fp.read_text(encoding="utf-8", errors="replace")
+
             read_file.__doc__ = f"Read knowledge base file: {rel_path}"
             read_file.__name__ = f"kb_{rel_path.stem}"
             return read_file
