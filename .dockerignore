@@ -1,8 +1,9 @@
 .git
 .github
 .dockerignore
-.release-please-manifest.json
-release-please-config.json
 README.md
 LICENSE
-version.txt
+requirements-dev.txt
+tests/
+validation/
+examples/
