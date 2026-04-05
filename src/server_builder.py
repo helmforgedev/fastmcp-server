@@ -210,7 +210,10 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
     if not tools_dir.is_dir():
         return 0
 
+    from caching import cache_tool
     from metrics import instrument_tool, is_enabled as metrics_enabled
+    from rate_limiter import rate_limit_tool
+    from sandboxing import sandbox_tool
 
     count = 0
     for py_file in sorted(tools_dir.glob("*.py")):
@@ -226,12 +229,28 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
         mod_annotations = getattr(module, "__annotations_mcp__", None)
         mod_scopes = getattr(module, "__required_scopes__", None)
 
+        # v1.0.0: sandboxing, rate limiting, caching
+        mod_max_memory_mb = getattr(module, "__max_memory_mb__", 0)
+        mod_max_output_size_kb = getattr(module, "__max_output_size_kb__", 0)
+        mod_rate_limit = getattr(module, "__rate_limit__", None)
+        mod_cache_ttl = getattr(module, "__cache_ttl__", 0)
+
         registered = False
         for name in dir(module):
             if name.startswith("_"):
                 continue
             obj = getattr(module, name)
             if callable(obj) and isinstance(obj, types.FunctionType):
+                # v1.0.0: Apply sandboxing (memory + output limits)
+                obj = sandbox_tool(obj, name, mod_max_memory_mb, mod_max_output_size_kb)
+
+                # v1.0.0: Apply rate limiting
+                obj = rate_limit_tool(obj, name, mod_rate_limit)
+
+                # v1.0.0: Apply caching
+                if mod_cache_ttl > 0:
+                    obj = cache_tool(obj, name, float(mod_cache_ttl))
+
                 # Instrument with metrics if enabled
                 if metrics_enabled():
                     obj = instrument_tool(obj, name)
@@ -249,6 +268,12 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
                 if mod_scopes is not None:
                     annotations = tool_kwargs.get("annotations", {})
                     annotations["requiredScopes"] = list(mod_scopes)
+                    tool_kwargs["annotations"] = annotations
+
+                # Mark idempotent hint if cached (v1.0.0)
+                if mod_cache_ttl > 0:
+                    annotations = tool_kwargs.get("annotations", {})
+                    annotations["idempotentHint"] = True
                     tool_kwargs["annotations"] = annotations
 
                 if tool_kwargs:
