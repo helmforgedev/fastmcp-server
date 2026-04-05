@@ -75,6 +75,7 @@ async def debug_info(request: Request) -> JSONResponse:
             "extra_packages": [
                 p.strip() for p in extra_packages.split(",") if p.strip()
             ],
+            "cache": _get_cache_stats(),
             "config": {
                 "mask_error_details": os.environ.get(
                     "MCP_MASK_ERROR_DETAILS", "false"
@@ -90,6 +91,9 @@ async def debug_info(request: Request) -> JSONResponse:
                 "ui_enabled": os.environ.get("MCP_UI_ENABLED", "true").lower()
                 == "true",
                 "log_format": os.environ.get("LOG_FORMAT", "text"),
+                "rate_limit_default": os.environ.get("MCP_RATE_LIMIT_DEFAULT", ""),
+                "cache_enabled": os.environ.get("MCP_CACHE_ENABLED", "true").lower()
+                != "false",
             },
         }
     )
@@ -138,6 +142,16 @@ async def api_resources(request: Request) -> JSONResponse:
 async def api_prompts(request: Request) -> JSONResponse:
     """List all registered prompts."""
     return JSONResponse(_extract_prompts())
+
+
+def _get_cache_stats() -> dict:
+    """Get cache statistics for diagnostics."""
+    try:
+        from caching import get_cache_stats
+
+        return get_cache_stats()
+    except Exception:
+        return {}
 
 
 def _get_components() -> dict:
