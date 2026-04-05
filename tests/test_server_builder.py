@@ -348,3 +348,48 @@ def test_duplicate_tools_error(workspace, monkeypatch):
 
     with pytest.raises(ValueError):
         build_server(str(workspace))
+
+
+# --- v0.4.0: Strict loading tests ---
+
+
+def test_strict_loading_bad_file(workspace, monkeypatch):
+    """Strict loading fails on bad Python file."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_STRICT_LOADING", "true")
+
+    (workspace / "tools" / "bad.py").write_text("this is not valid python !!!")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Strict loading"):
+        build_server(str(workspace))
+
+
+def test_strict_loading_off_by_default(workspace, monkeypatch):
+    """Strict loading is off by default — bad files are skipped."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+
+    (workspace / "tools" / "bad.py").write_text("this is not valid python !!!")
+    (workspace / "tools" / "good.py").write_text(
+        'def hello() -> str:\n    return "hi"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_strict_loading_resource_without_uri(workspace, monkeypatch):
+    """Strict loading fails on resource without RESOURCE_URI or RESOURCES."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_STRICT_LOADING", "true")
+
+    (workspace / "resources" / "no_uri.py").write_text(
+        "def get_data() -> dict:\n    return {'key': 'value'}\n"
+    )
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Strict loading"):
+        build_server(str(workspace))

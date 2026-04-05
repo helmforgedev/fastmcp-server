@@ -26,6 +26,7 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     """Build and return a configured FastMCP server instance and component counts."""
     ws = Path(workspace)
     server_name = os.environ.get("MCP_SERVER_NAME", "fastmcp-server")
+    strict = os.environ.get("MCP_STRICT_LOADING", "false").lower() == "true"
 
     # Configure authentication
     auth = _build_auth()
@@ -47,9 +48,9 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     mcp = FastMCP(**server_kwargs)
 
     # Load components and track counts
-    tool_count = _load_tools(mcp, ws / "tools")
-    resource_count = _load_resources(mcp, ws / "resources")
-    prompt_count = _load_prompts(mcp, ws / "prompts")
+    tool_count = _load_tools(mcp, ws / "tools", strict=strict)
+    resource_count = _load_resources(mcp, ws / "resources", strict=strict)
+    prompt_count = _load_prompts(mcp, ws / "prompts", strict=strict)
     knowledge_count = _load_knowledge(mcp, ws / "knowledge")
 
     counts = {
@@ -105,15 +106,19 @@ def _build_auth():
     return None
 
 
-def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
+def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
     """Load tool functions from Python files in the tools directory."""
     if not tools_dir.is_dir():
         return 0
+
+    from metrics import instrument_tool, is_enabled as metrics_enabled
 
     count = 0
     for py_file in sorted(tools_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
+            if strict:
+                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         # Read optional module-level metadata (v0.3.0)
@@ -127,6 +132,10 @@ def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
                 continue
             obj = getattr(module, name)
             if callable(obj) and isinstance(obj, types.FunctionType):
+                # Instrument with metrics if enabled
+                if metrics_enabled():
+                    obj = instrument_tool(obj, name)
+
                 # Build kwargs for mcp.tool()
                 tool_kwargs: dict = {}
                 if mod_tags is not None:
@@ -145,12 +154,15 @@ def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
                 registered = True
 
         if not registered:
-            logger.warning("No tools found in %s", py_file.name)
+            msg = f"No tools found in {py_file.name}"
+            if strict:
+                raise RuntimeError(f"Strict loading: {msg}")
+            logger.warning(msg)
 
     return count
 
 
-def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
+def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> int:
     """Load resource functions from Python files in the resources directory."""
     if not resources_dir.is_dir():
         return 0
@@ -159,6 +171,8 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
     for py_file in sorted(resources_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
+            if strict:
+                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         # v0.3.0: Support RESOURCES dict for multiple resources per file
@@ -171,18 +185,19 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
                     logger.info("Registered resource: %s -> %s", uri, func_name)
                     count += 1
                 else:
-                    logger.warning(
-                        "RESOURCES maps '%s' to '%s' but function not found in %s",
-                        uri,
-                        func_name,
-                        py_file.name,
-                    )
+                    msg = f"RESOURCES maps '{uri}' to '{func_name}' but function not found in {py_file.name}"
+                    if strict:
+                        raise RuntimeError(f"Strict loading: {msg}")
+                    logger.warning(msg)
             continue
 
         # Legacy: single resource via RESOURCE_URI
         resource_uri = getattr(module, "RESOURCE_URI", None)
         if not resource_uri:
-            logger.warning("No RESOURCE_URI or RESOURCES in %s, skipping", py_file.name)
+            msg = f"No RESOURCE_URI or RESOURCES in {py_file.name}, skipping"
+            if strict:
+                raise RuntimeError(f"Strict loading: {msg}")
+            logger.warning(msg)
             continue
 
         for name in dir(module):
@@ -202,7 +217,7 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
     return count
 
 
-def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> int:
+def _load_prompts(mcp: FastMCP, prompts_dir: Path, strict: bool = False) -> int:
     """Load prompt functions from Python files in the prompts directory."""
     if not prompts_dir.is_dir():
         return 0
@@ -211,6 +226,8 @@ def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> int:
     for py_file in sorted(prompts_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
+            if strict:
+                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         for name in dir(module):

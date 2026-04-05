@@ -19,10 +19,11 @@ EOF
 docker run -d \
   -p 8000:8000 \
   -v $(pwd)/tools:/app/inline/tools \
-  docker.io/helmforge/fastmcp-server:0.2.0
+  docker.io/helmforge/fastmcp-server:0.4.0
 ```
 
 Your MCP server is now available at `http://localhost:8000/mcp`.
+The built-in Web UI is at `http://localhost:8000/ui`.
 
 ## How It Works
 
@@ -40,6 +41,13 @@ Sources (Inline, S3, Git)
         │
         ▼
   FastMCP Server (:8000/mcp)
+  ├── /ui               → Web dashboard
+  ├── /healthz          → Liveness probe
+  ├── /readyz           → Readiness probe
+  ├── /startupz         → Startup probe
+  ├── /debug/info       → Server diagnostics
+  ├── /metrics          → Prometheus metrics (opt-in)
+  └── /api/*            → JSON API for UI
 ```
 
 ## Sources
@@ -59,7 +67,7 @@ All sources can be combined. Inline always wins on conflicts.
 ```yaml
 services:
   mcp-server:
-    image: docker.io/helmforge/fastmcp-server:0.2.0
+    image: docker.io/helmforge/fastmcp-server:0.4.0
     ports:
       - "8000:8000"
     volumes:
@@ -72,7 +80,7 @@ services:
       MCP_AUTH_TYPE: bearer
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/mcp"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -83,7 +91,7 @@ services:
 ```yaml
 services:
   mcp-server:
-    image: docker.io/helmforge/fastmcp-server:0.2.0
+    image: docker.io/helmforge/fastmcp-server:0.4.0
     ports:
       - "8000:8000"
     environment:
@@ -112,7 +120,7 @@ docker run -d \
   -e SOURCE_GIT_ENABLED=true \
   -e SOURCE_GIT_REPOSITORY=https://github.com/myorg/mcp-tools.git \
   -e SOURCE_GIT_BRANCH=main \
-  docker.io/helmforge/fastmcp-server:0.2.0
+  docker.io/helmforge/fastmcp-server:0.4.0
 ```
 
 For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
@@ -253,6 +261,58 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | Bearer | `MCP_AUTH_TYPE=bearer` + `MCP_AUTH_TOKEN` | API keys, service accounts |
 | JWT | `MCP_AUTH_TYPE=jwt` + `MCP_AUTH_JWT_*` | OAuth/OIDC, enterprise SSO |
 
+## Web UI
+
+The embedded dashboard at `/ui` provides:
+
+- **Dashboard** — Server name, version, uptime, component counts, source status
+- **Tools Explorer** — All registered tools with descriptions, parameters, tags, timeout
+- **Resources Explorer** — Resources and templates with URIs, MIME types
+- **Prompts Explorer** — All prompts with descriptions
+
+Auto-refreshes every 15 seconds. Disable with `MCP_UI_ENABLED=false`.
+
+## Observability
+
+### Health Endpoints
+
+| Endpoint | Purpose | When 200 |
+|---|---|---|
+| `GET /healthz` | Liveness | Always (process is running) |
+| `GET /readyz` | Readiness | Sources synced + components loaded |
+| `GET /startupz` | Startup | Full initialization complete |
+
+### Diagnostics
+
+`GET /debug/info` returns full server diagnostics: version, FastMCP version, uptime, component details, source status, auth type, and configuration.
+
+### Prometheus Metrics
+
+Enable with `MCP_METRICS_ENABLED=true`. Exposes at `/metrics`:
+
+- `mcp_tools_total` — Number of registered tools
+- `mcp_resources_total` — Number of registered resources
+- `mcp_prompts_total` — Number of registered prompts
+- `mcp_knowledge_total` — Number of knowledge files
+- `mcp_tool_calls_total{tool}` — Tool invocation counter
+- `mcp_tool_duration_seconds{tool}` — Tool execution duration histogram
+- `mcp_tool_errors_total{tool}` — Tool error counter
+- `mcp_sources_sync_total{source,status}` — Source sync operations
+- `mcp_auth_requests_total{result}` — Auth attempt counter
+
+### Structured Logging
+
+Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudWatch, and Datadog:
+
+```json
+{
+  "timestamp": "2026-04-05T10:30:00+00:00",
+  "level": "INFO",
+  "logger": "fastmcp-server.builder",
+  "message": "Registered tool: greet"
+}
+```
+
 ## Environment Variables
 
 ### Server
@@ -265,8 +325,12 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | `MCP_PATH` | `/mcp` | HTTP endpoint path |
 | `MCP_WORKSPACE` | `/app/workspace` | Workspace directory |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `MCP_MASK_ERROR_DETAILS` | `false` | Hide internal error details from clients |
 | `MCP_ON_DUPLICATE_TOOLS` | `warn` | Duplicate handling: `warn`, `error`, `replace`, `ignore` |
+| `MCP_STRICT_LOADING` | `false` | Fail on boot if any tool/resource has errors |
+| `MCP_UI_ENABLED` | `true` | Enable built-in Web UI at `/ui` |
+| `MCP_METRICS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `EXTRA_PIP_PACKAGES` | | Comma-separated pip packages to install at startup |
 
 ### Authentication
@@ -301,12 +365,22 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | `SOURCE_GIT_PATH` | | Subdirectory within the repo |
 | `SOURCE_GIT_TOKEN` | | Auth token for private repos |
 
+## Init Container Pattern
+
+For Kubernetes, separate source syncing from server startup using `sync_only.py`:
+
+```bash
+python /app/sync_only.py
+```
+
+This script runs `sync_sources()` and exits. Use it as a Kubernetes init container to pre-populate the workspace volume before the main server starts.
+
 ## Deployment Options
 
 | Method | Docs |
 |---|---|
 | Docker / Docker Compose / Swarm | This README |
-| Kubernetes (Helm) | [helmforge/charts — mcp-server](https://helmforge.dev) |
+| Kubernetes (Helm) | [helmforge/charts — fastmcp-server](https://helmforge.dev) |
 
 ## License
 
