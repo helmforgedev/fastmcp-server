@@ -1,9 +1,10 @@
 """Multi-source loader for FastMCP server assets.
 
-Supports three sources with merge precedence:
+Supports four sources with merge precedence:
   1. Inline (ConfigMap, mounted at /app/inline/) - highest precedence
-  2. S3-compatible storage (AWS S3, MinIO, Cloudflare R2)
-  3. Git repository - lowest precedence
+  2. OCI artifacts (ORAS pull) - second highest
+  3. S3-compatible storage (AWS S3, MinIO, Cloudflare R2)
+  4. Git repository - lowest precedence
 
 Files are synced into the workspace directory organized by type:
   workspace/tools/*.py
@@ -12,6 +13,7 @@ Files are synced into the workspace directory organized by type:
   workspace/knowledge/*
 """
 
+import fnmatch
 import logging
 import os
 import shutil
@@ -30,13 +32,17 @@ def sync_sources(workspace: str) -> None:
     for d in ASSET_DIRS:
         (ws / d).mkdir(parents=True, exist_ok=True)
 
-    # Source 3 (lowest precedence): Git
+    # Source 4 (lowest precedence): Git
     if os.environ.get("SOURCE_GIT_ENABLED", "false").lower() == "true":
         _sync_git(ws)
 
-    # Source 2: S3
+    # Source 3: S3
     if os.environ.get("SOURCE_S3_ENABLED", "false").lower() == "true":
         _sync_s3(ws)
+
+    # Source 2: OCI
+    if os.environ.get("SOURCE_OCI_ENABLED", "false").lower() == "true":
+        _sync_oci(ws)
 
     # Source 1 (highest precedence): Inline (ConfigMap mounts)
     inline_dir = Path(os.environ.get("SOURCE_INLINE_DIR", "/app/inline"))
@@ -78,7 +84,10 @@ def _sync_git(workspace: Path) -> None:
     logger.info("Git clone complete: %s", repo.head.commit.hexsha[:8])
 
     source_root = clone_dir / subpath if subpath else clone_dir
-    _merge_into_workspace(workspace, source_root)
+
+    include = os.environ.get("SOURCE_GIT_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_GIT_EXCLUDE", "")
+    _merge_into_workspace(workspace, source_root, include=include, exclude=exclude)
 
 
 def _sync_s3(workspace: Path) -> None:
@@ -133,7 +142,49 @@ def _sync_s3(workspace: Path) -> None:
             count += 1
 
     logger.info("Downloaded %d file(s) from S3", count)
-    _merge_into_workspace(workspace, s3_dir)
+
+    include = os.environ.get("SOURCE_S3_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_S3_EXCLUDE", "")
+    _merge_into_workspace(workspace, s3_dir, include=include, exclude=exclude)
+
+
+def _sync_oci(workspace: Path) -> None:
+    """Pull assets from an OCI registry via ORAS."""
+    import subprocess
+
+    registry = os.environ.get("SOURCE_OCI_REGISTRY", "")
+    tag = os.environ.get("SOURCE_OCI_TAG", "latest")
+    username = os.environ.get("SOURCE_OCI_USERNAME", "")
+    password = os.environ.get("SOURCE_OCI_PASSWORD", "")
+
+    if not registry:
+        logger.warning("OCI source enabled but SOURCE_OCI_REGISTRY not set")
+        return
+
+    oci_dir = workspace / ".oci-source"
+    if oci_dir.exists():
+        shutil.rmtree(oci_dir)
+    oci_dir.mkdir(parents=True)
+
+    ref = f"{registry}:{tag}"
+    logger.info("Pulling OCI artifact %s...", ref)
+
+    # Use oras CLI if available, otherwise try Python oras-py
+    cmd = ["oras", "pull", ref, "--output", str(oci_dir)]
+    if username and password:
+        cmd.extend(["--username", username, "--password", password])
+
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error("OCI pull failed: %s", result.stderr.strip())
+        return
+
+    logger.info("OCI pull complete")
+
+    include = os.environ.get("SOURCE_OCI_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_OCI_EXCLUDE", "")
+    _merge_into_workspace(workspace, oci_dir, include=include, exclude=exclude)
 
 
 def _sync_inline(workspace: Path, inline_dir: Path) -> None:
@@ -142,7 +193,12 @@ def _sync_inline(workspace: Path, inline_dir: Path) -> None:
     _merge_into_workspace(workspace, inline_dir)
 
 
-def _merge_into_workspace(workspace: Path, source: Path) -> None:
+def _merge_into_workspace(
+    workspace: Path,
+    source: Path,
+    include: str = "",
+    exclude: str = "",
+) -> None:
     """Merge source directory into workspace, overwriting existing files.
 
     Expected source structure:
@@ -150,6 +206,10 @@ def _merge_into_workspace(workspace: Path, source: Path) -> None:
       source/resources/*.py
       source/prompts/*.py
       source/knowledge/*
+
+    Args:
+        include: Glob pattern for files to include (empty = all)
+        exclude: Glob pattern for files to exclude (empty = none)
     """
     for asset_dir in ASSET_DIRS:
         src = source / asset_dir
@@ -159,6 +219,14 @@ def _merge_into_workspace(workspace: Path, source: Path) -> None:
         for item in src.rglob("*"):
             if item.is_file():
                 rel = item.relative_to(src)
+                rel_str = str(rel)
+
+                # Apply include/exclude filters
+                if include and not fnmatch.fnmatch(rel_str, include):
+                    continue
+                if exclude and fnmatch.fnmatch(rel_str, exclude):
+                    continue
+
                 target = dst / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, target)

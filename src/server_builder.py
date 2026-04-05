@@ -72,6 +72,44 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     return mcp, counts
 
 
+def rebuild_components(mcp, workspace: str) -> dict:
+    """Rebuild and re-register all components (used by hot reload and periodic sync).
+
+    Clears existing components from the local provider and reloads from workspace.
+    """
+    ws = Path(workspace)
+    strict = os.environ.get("MCP_STRICT_LOADING", "false").lower() == "true"
+
+    # Clear existing components
+    try:
+        mcp._local_provider._components.clear()
+    except AttributeError:
+        logger.warning("Could not clear components for rebuild")
+
+    # Reload all components
+    tool_count = _load_tools(mcp, ws / "tools", strict=strict)
+    resource_count = _load_resources(mcp, ws / "resources", strict=strict)
+    prompt_count = _load_prompts(mcp, ws / "prompts", strict=strict)
+    knowledge_count = _load_knowledge(mcp, ws / "knowledge")
+
+    counts = {
+        "tool_count": tool_count,
+        "resource_count": resource_count,
+        "prompt_count": prompt_count,
+        "knowledge_count": knowledge_count,
+    }
+
+    logger.info(
+        "Rebuild complete: %d tools, %d resources, %d prompts, %d knowledge files",
+        tool_count,
+        resource_count,
+        prompt_count,
+        knowledge_count,
+    )
+
+    return counts
+
+
 def _build_auth():
     """Build authentication handler from environment variables."""
     auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
