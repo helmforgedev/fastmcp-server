@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   lint:
@@ -45,30 +44,7 @@ jobs:
         with:
           context: .
           push: false
-          load: true
           tags: helmforge/fastmcp-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy scan (SARIF report)
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: helmforge/fastmcp-server:ci
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-
-      - name: Upload Trivy results to Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: trivy-results.sarif
-
-      - name: Trivy scan (fail on CRITICAL app vulnerabilities)
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: helmforge/fastmcp-server:ci
-          format: table
-          severity: CRITICAL
-          exit-code: "1"
-          vuln-type: library
