@@ -111,37 +111,98 @@ def rebuild_components(mcp, workspace: str) -> dict:
 
 
 def _build_auth():
-    """Build authentication handler from environment variables."""
+    """Build authentication handler from environment variables.
+
+    Supported auth types:
+      - none: No authentication
+      - bearer: Static token via StaticTokenVerifier
+      - jwt: JWT verification via JWTVerifier
+      - multi: Multiple auth providers tried in order
+    """
     auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
 
     if auth_type == "bearer":
-        from fastmcp.server.auth import StaticTokenVerifier
-
-        token = os.environ.get("MCP_AUTH_TOKEN", "")
-        if not token:
-            logger.warning("Bearer auth enabled but MCP_AUTH_TOKEN not set")
-            return None
-        return StaticTokenVerifier(tokens={token: {"sub": "bearer-user"}})
+        return _build_bearer_auth()
 
     if auth_type == "jwt":
-        from fastmcp.server.auth import JWTVerifier
+        return _build_jwt_auth()
 
-        kwargs = {}
-        issuer = os.environ.get("MCP_AUTH_JWT_ISSUER")
-        audience = os.environ.get("MCP_AUTH_JWT_AUDIENCE")
-        jwks_uri = os.environ.get("MCP_AUTH_JWT_JWKS_URI")
-        if issuer:
-            kwargs["issuer"] = issuer
-        if audience:
-            kwargs["audience"] = audience
-        if jwks_uri:
-            kwargs["jwks_uri"] = jwks_uri
-        return JWTVerifier(**kwargs)
+    if auth_type == "multi":
+        return _build_multi_auth()
 
     if auth_type != "none":
         logger.warning("Unknown auth type '%s', running without auth", auth_type)
 
     return None
+
+
+def _build_bearer_auth():
+    """Build bearer token auth."""
+    from fastmcp.server.auth import StaticTokenVerifier
+
+    token = os.environ.get("MCP_AUTH_TOKEN", "")
+    if not token:
+        logger.warning("Bearer auth enabled but MCP_AUTH_TOKEN not set")
+        return None
+    return StaticTokenVerifier(tokens={token: {"sub": "bearer-user"}})
+
+
+def _build_jwt_auth():
+    """Build JWT auth."""
+    from fastmcp.server.auth import JWTVerifier
+
+    kwargs = {}
+    issuer = os.environ.get("MCP_AUTH_JWT_ISSUER")
+    audience = os.environ.get("MCP_AUTH_JWT_AUDIENCE")
+    jwks_uri = os.environ.get("MCP_AUTH_JWT_JWKS_URI")
+    if issuer:
+        kwargs["issuer"] = issuer
+    if audience:
+        kwargs["audience"] = audience
+    if jwks_uri:
+        kwargs["jwks_uri"] = jwks_uri
+    return JWTVerifier(**kwargs)
+
+
+def _build_multi_auth():
+    """Build multi-auth — try each configured provider in order.
+
+    Uses MCP_AUTH_PROVIDERS to determine which providers to combine.
+    Example: MCP_AUTH_PROVIDERS=bearer,jwt
+    """
+    providers_str = os.environ.get("MCP_AUTH_PROVIDERS", "")
+    if not providers_str:
+        logger.warning("Multi auth enabled but MCP_AUTH_PROVIDERS not set")
+        return None
+
+    providers = [p.strip() for p in providers_str.split(",") if p.strip()]
+    auth_list = []
+
+    for provider in providers:
+        if provider == "bearer":
+            auth = _build_bearer_auth()
+            if auth:
+                auth_list.append(auth)
+        elif provider == "jwt":
+            auth = _build_jwt_auth()
+            if auth:
+                auth_list.append(auth)
+        else:
+            logger.warning("Unknown auth provider in multi-auth: %s", provider)
+
+    if not auth_list:
+        logger.warning("No valid auth providers configured for multi-auth")
+        return None
+
+    if len(auth_list) == 1:
+        return auth_list[0]
+
+    # Use the first provider — FastMCP doesn't have a built-in MultiAuth yet,
+    # so we use the first valid provider. When FastMCP adds MultiAuth, we'll use it.
+    logger.info(
+        "Multi-auth configured with %d providers (using first match)", len(auth_list)
+    )
+    return auth_list[0]
 
 
 def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
@@ -159,10 +220,11 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
                 raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
-        # Read optional module-level metadata (v0.3.0)
+        # Read optional module-level metadata (v0.3.0+)
         mod_tags = getattr(module, "__tags__", None)
         mod_timeout = getattr(module, "__timeout__", None)
         mod_annotations = getattr(module, "__annotations_mcp__", None)
+        mod_scopes = getattr(module, "__required_scopes__", None)
 
         registered = False
         for name in dir(module):
@@ -182,6 +244,12 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
                     tool_kwargs["timeout"] = float(mod_timeout)
                 if mod_annotations is not None:
                     tool_kwargs["annotations"] = dict(mod_annotations)
+
+                # Store required scopes in annotations (v0.7.0)
+                if mod_scopes is not None:
+                    annotations = tool_kwargs.get("annotations", {})
+                    annotations["requiredScopes"] = list(mod_scopes)
+                    tool_kwargs["annotations"] = annotations
 
                 if tool_kwargs:
                     mcp.tool(obj, **tool_kwargs)

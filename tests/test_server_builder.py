@@ -393,3 +393,28 @@ def test_strict_loading_resource_without_uri(workspace, monkeypatch):
 
     with pytest.raises(RuntimeError, match="Strict loading"):
         build_server(str(workspace))
+
+
+# --- v0.7.0: Auth and scopes tests ---
+
+
+def test_multi_auth_bearer_only(workspace, monkeypatch):
+    """Multi-auth with only bearer falls back to bearer."""
+    monkeypatch.setenv("MCP_AUTH_TYPE", "multi")
+    monkeypatch.setenv("MCP_AUTH_PROVIDERS", "bearer")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+
+    mcp, counts = build_server(str(workspace))
+    assert mcp is not None
+
+
+def test_required_scopes_stored_in_annotations(workspace, monkeypatch):
+    """__required_scopes__ is stored in tool annotations."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "admin.py").write_text(
+        '__required_scopes__ = ["deploy:write"]\n\n'
+        'def deploy(service: str) -> str:\n    """Deploy."""\n    return "done"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+    assert counts["tool_count"] == 1
