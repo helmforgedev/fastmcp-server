@@ -1,28 +1,182 @@
 # fastmcp-server
 
-Proprietary FastMCP server image for the [HelmForge](https://helmforge.dev) `mcp-server` Helm chart.
+Production-ready [FastMCP](https://gofastmcp.dev) server image with dynamic loading of tools, resources, prompts, and knowledge bases from multiple sources.
 
-## Overview
+Run your own MCP server anywhere — Docker, Compose, Swarm, Kubernetes, or any container runtime. Define tools in Python, mount them, and your server is live.
 
-A lightweight, production-ready Docker image that runs a [FastMCP](https://gofastmcp.dev) server with dynamic loading of tools, resources, prompts, and knowledge bases from multiple sources.
+## Quick Start
+
+```bash
+# Create a tool
+mkdir -p tools
+cat > tools/hello.py << 'EOF'
+def greet(name: str) -> str:
+    """Greet someone by name."""
+    return f"Hello, {name}!"
+EOF
+
+# Run the server
+docker run -d \
+  -p 8000:8000 \
+  -v $(pwd)/tools:/app/inline/tools \
+  docker.io/helmforge/fastmcp-server:0.1.0
+```
+
+Your MCP server is now available at `http://localhost:8000/mcp`.
+
+## How It Works
+
+The server loads MCP components (tools, resources, prompts, knowledge) from a workspace directory. On startup, it syncs files from one or more sources into the workspace, registers everything with FastMCP, and exposes the server over HTTP.
+
+```
+Sources (Inline, S3, Git)
+        │
+        ▼
+  /app/workspace/
+  ├── tools/*.py         → registered as MCP tools
+  ├── resources/*.py     → registered as MCP resources
+  ├── prompts/*.py       → registered as MCP prompts
+  └── knowledge/*        → served as knowledge:// resources
+        │
+        ▼
+  FastMCP Server (:8000/mcp)
+```
 
 ## Sources
 
 The image supports three data sources with merge precedence (highest first):
 
-1. **Inline** — ConfigMap-mounted files at `/app/inline/`
-2. **S3** — Any S3-compatible storage (AWS S3, MinIO, Cloudflare R2)
-3. **Git** — Clone from any HTTPS Git repository
+| Source | Best For | Limit |
+|---|---|---|
+| **Inline** (volume mount at `/app/inline/`) | Quick setup, small configs | Host filesystem |
+| **S3** (AWS S3, MinIO, Cloudflare R2) | Teams, CI/CD pipelines, large knowledge bases | Unlimited |
+| **Git** (any HTTPS repo) | Version-controlled tools, collaboration | Repo size |
 
-## Workspace Structure
+All sources can be combined. Inline always wins on conflicts.
+
+## Running with Docker Compose
+
+```yaml
+services:
+  mcp-server:
+    image: docker.io/helmforge/fastmcp-server:0.1.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./tools:/app/inline/tools
+      - ./resources:/app/inline/resources
+      - ./prompts:/app/inline/prompts
+      - ./knowledge:/app/inline/knowledge
+    environment:
+      MCP_SERVER_NAME: my-mcp-server
+      MCP_AUTH_TYPE: bearer
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/mcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+## Running with S3 (MinIO example)
+
+```yaml
+services:
+  mcp-server:
+    image: docker.io/helmforge/fastmcp-server:0.1.0
+    ports:
+      - "8000:8000"
+    environment:
+      SOURCE_S3_ENABLED: "true"
+      SOURCE_S3_ENDPOINT: http://minio:9000
+      SOURCE_S3_BUCKET: mcp-tools
+      SOURCE_S3_ACCESS_KEY: minioadmin
+      SOURCE_S3_SECRET_KEY: minioadmin
+
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+```
+
+## Running with Git Source
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -e SOURCE_GIT_ENABLED=true \
+  -e SOURCE_GIT_REPOSITORY=https://github.com/myorg/mcp-tools.git \
+  -e SOURCE_GIT_BRANCH=main \
+  docker.io/helmforge/fastmcp-server:0.1.0
+```
+
+For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
+
+## Writing Tools
+
+Create a `.py` file in `tools/`. Every public function becomes an MCP tool:
+
+```python
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    import httpx
+    return httpx.get(f"https://wttr.in/{city}?format=3").text
+
+def roll_dice(sides: int = 6) -> int:
+    """Roll a die with the given number of sides."""
+    import random
+    return random.randint(1, sides)
+```
+
+## Writing Resources
+
+Create a `.py` file in `resources/` with a `RESOURCE_URI` constant and a handler function:
+
+```python
+RESOURCE_URI = "config://app"
+
+def get_config() -> dict:
+    """Application configuration."""
+    return {"version": "1.0", "env": "production"}
+```
+
+## Writing Prompts
+
+Create a `.py` file in `prompts/`. Every public function becomes an MCP prompt:
+
+```python
+def summarize(text: str) -> str:
+    """Summarize the provided text."""
+    return f"Please provide a concise summary of:\n\n{text}"
+```
+
+## Knowledge Base
+
+Any file placed in `knowledge/` is served as a `knowledge://` resource. Supports text, markdown, JSON, YAML, or any UTF-8 file.
 
 ```
-/app/workspace/
-├── tools/        *.py files — each public function becomes an MCP tool
-├── resources/    *.py files — define RESOURCE_URI + handler function
-├── prompts/      *.py files — each public function becomes an MCP prompt
-└── knowledge/    any files  — served as knowledge:// resources
+knowledge/
+├── product-overview.md
+├── api-reference.json
+└── troubleshooting/
+    ├── common-errors.md
+    └── faq.md
 ```
+
+These become accessible as `knowledge://product-overview.md`, `knowledge://troubleshooting/common-errors.md`, etc.
+
+## Authentication
+
+| Type | Variables | Use Case |
+|---|---|---|
+| None | `MCP_AUTH_TYPE=none` | Development, internal networks |
+| Bearer | `MCP_AUTH_TYPE=bearer` + `MCP_AUTH_TOKEN` | API keys, service accounts |
+| JWT | `MCP_AUTH_TYPE=jwt` + `MCP_AUTH_JWT_*` | OAuth/OIDC, enterprise SSO |
 
 ## Environment Variables
 
@@ -69,46 +223,13 @@ The image supports three data sources with merge precedence (highest first):
 | `SOURCE_GIT_PATH` | | Subdirectory within the repo |
 | `SOURCE_GIT_TOKEN` | | Auth token for private repos |
 
-## Writing Tools
+## Deployment Options
 
-Create a Python file in `tools/` with public functions:
-
-```python
-def get_weather(city: str) -> str:
-    """Get current weather for a city."""
-    import httpx
-    return httpx.get(f"https://wttr.in/{city}?format=3").text
-
-def roll_dice(sides: int = 6) -> int:
-    """Roll a die with the given number of sides."""
-    import random
-    return random.randint(1, sides)
-```
-
-Every public function is automatically registered as an MCP tool.
-
-## Writing Resources
-
-Create a Python file in `resources/` with a `RESOURCE_URI` constant:
-
-```python
-RESOURCE_URI = "config://app"
-
-def get_config() -> dict:
-    """Application configuration."""
-    return {"version": "1.0", "env": "production"}
-```
-
-## Writing Prompts
-
-Create a Python file in `prompts/`:
-
-```python
-def summarize(text: str) -> str:
-    """Summarize the provided text."""
-    return f"Please provide a concise summary of:\n\n{text}"
-```
+| Method | Docs |
+|---|---|
+| Docker / Docker Compose / Swarm | This README |
+| Kubernetes (Helm) | [helmforge/charts — mcp-server](https://helmforge.dev) |
 
 ## License
 
-Proprietary — HelmForge
+MIT — see [LICENSE](LICENSE).

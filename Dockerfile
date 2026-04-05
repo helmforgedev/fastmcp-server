@@ -12,9 +12,9 @@ RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt
 FROM docker.io/library/python:3.13-slim
 
 LABEL org.opencontainers.image.title="fastmcp-server" \
-      org.opencontainers.image.description="Proprietary FastMCP server image for the HelmForge mcp-server Helm chart" \
+      org.opencontainers.image.description="Production-ready FastMCP server with dynamic tool loading from inline, S3, and Git sources" \
       org.opencontainers.image.vendor="HelmForge" \
-      org.opencontainers.image.url="https://helmforge.dev" \
+      org.opencontainers.image.url="https://github.com/helmforgedev/fastmcp-server" \
       org.opencontainers.image.source="https://github.com/helmforgedev/fastmcp-server" \
       org.opencontainers.image.licenses="MIT"
 
