@@ -65,6 +65,10 @@ def _install_extra_packages() -> None:
         logger.error("Failed to install extra packages: %s", result.stderr.strip())
     else:
         logger.info("Extra packages installed successfully")
+        # Invalidate caches so importlib.metadata sees newly installed packages
+        import importlib
+
+        importlib.invalidate_caches()
 
 
 def _print_banner(
