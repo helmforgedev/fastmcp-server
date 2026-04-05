@@ -67,7 +67,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Trivy scan released image
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: docker.io/helmforge/fastmcp-server:${{ needs.release-please.outputs.version }}
           format: sarif
