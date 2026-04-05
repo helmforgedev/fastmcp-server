@@ -144,7 +144,9 @@ def _build_bearer_auth():
     if not token:
         logger.warning("Bearer auth enabled but MCP_AUTH_TOKEN not set")
         return None
-    return StaticTokenVerifier(tokens={token: {"sub": "bearer-user"}})
+    return StaticTokenVerifier(
+        tokens={token: {"client_id": "bearer-user", "sub": "bearer-user", "scopes": []}}
+    )
 
 
 def _build_jwt_auth():
