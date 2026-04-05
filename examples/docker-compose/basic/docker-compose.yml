@@ -1,0 +1,11 @@
+services:
+  mcp-server:
+    image: docker.io/helmforge/fastmcp-server:0.2.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../tools:/app/inline/tools:ro
+      - ../../resources:/app/inline/resources:ro
+      - ../../prompts:/app/inline/prompts:ro
+    environment:
+      MCP_SERVER_NAME: basic-mcp-server

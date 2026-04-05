@@ -22,8 +22,8 @@ from fastmcp import FastMCP
 logger = logging.getLogger("fastmcp-server.builder")
 
 
-def build_server(workspace: str) -> FastMCP:
-    """Build and return a configured FastMCP server instance."""
+def build_server(workspace: str) -> tuple[FastMCP, dict]:
+    """Build and return a configured FastMCP server instance and component counts."""
     ws = Path(workspace)
     server_name = os.environ.get("MCP_SERVER_NAME", "fastmcp-server")
 
@@ -31,16 +31,29 @@ def build_server(workspace: str) -> FastMCP:
     auth = _build_auth()
     mcp = FastMCP(name=server_name, auth=auth) if auth else FastMCP(name=server_name)
 
-    # Load components
-    _load_tools(mcp, ws / "tools")
-    _load_resources(mcp, ws / "resources")
-    _load_prompts(mcp, ws / "prompts")
-    _load_knowledge(mcp, ws / "knowledge")
+    # Load components and track counts
+    tool_count = _load_tools(mcp, ws / "tools")
+    resource_count = _load_resources(mcp, ws / "resources")
+    prompt_count = _load_prompts(mcp, ws / "prompts")
+    knowledge_count = _load_knowledge(mcp, ws / "knowledge")
 
-    tool_count = len(mcp._tool_manager._tools) if hasattr(mcp, "_tool_manager") else 0
-    logger.info("Server '%s' built with %d tool(s)", server_name, tool_count)
+    counts = {
+        "tool_count": tool_count,
+        "resource_count": resource_count,
+        "prompt_count": prompt_count,
+        "knowledge_count": knowledge_count,
+    }
 
-    return mcp
+    logger.info(
+        "Server '%s' built: %d tools, %d resources, %d prompts, %d knowledge files",
+        server_name,
+        tool_count,
+        resource_count,
+        prompt_count,
+        knowledge_count,
+    )
+
+    return mcp, counts
 
 
 def _build_auth():
@@ -77,17 +90,17 @@ def _build_auth():
     return None
 
 
-def _load_tools(mcp: FastMCP, tools_dir: Path) -> None:
+def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
     """Load tool functions from Python files in the tools directory."""
     if not tools_dir.is_dir():
-        return
+        return 0
 
+    count = 0
     for py_file in sorted(tools_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
             continue
 
-        # Look for functions marked with _mcp_tool = True or all public functions
         registered = False
         for name in dir(module):
             if name.startswith("_"):
@@ -96,23 +109,26 @@ def _load_tools(mcp: FastMCP, tools_dir: Path) -> None:
             if callable(obj) and isinstance(obj, types.FunctionType):
                 mcp.tool(obj)
                 logger.info("Registered tool: %s (from %s)", name, py_file.name)
+                count += 1
                 registered = True
 
         if not registered:
             logger.warning("No tools found in %s", py_file.name)
 
+    return count
 
-def _load_resources(mcp: FastMCP, resources_dir: Path) -> None:
+
+def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
     """Load resource functions from Python files in the resources directory."""
     if not resources_dir.is_dir():
-        return
+        return 0
 
+    count = 0
     for py_file in sorted(resources_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
             continue
 
-        # Resources must define RESOURCE_URI and a function
         resource_uri = getattr(module, "RESOURCE_URI", None)
         if not resource_uri:
             logger.warning("No RESOURCE_URI in %s, skipping", py_file.name)
@@ -129,14 +145,18 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> None:
             ):
                 mcp.resource(resource_uri)(obj)
                 logger.info("Registered resource: %s -> %s", resource_uri, name)
+                count += 1
                 break
 
+    return count
 
-def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> None:
+
+def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> int:
     """Load prompt functions from Python files in the prompts directory."""
     if not prompts_dir.is_dir():
-        return
+        return 0
 
+    count = 0
     for py_file in sorted(prompts_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
@@ -149,13 +169,17 @@ def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> None:
             if callable(obj) and isinstance(obj, types.FunctionType):
                 mcp.prompt(obj)
                 logger.info("Registered prompt: %s (from %s)", name, py_file.name)
+                count += 1
+
+    return count
 
 
-def _load_knowledge(mcp: FastMCP, knowledge_dir: Path) -> None:
+def _load_knowledge(mcp: FastMCP, knowledge_dir: Path) -> int:
     """Register knowledge base files as static resources."""
     if not knowledge_dir.is_dir():
-        return
+        return 0
 
+    count = 0
     for file_path in sorted(knowledge_dir.rglob("*")):
         if not file_path.is_file():
             continue
@@ -163,17 +187,19 @@ def _load_knowledge(mcp: FastMCP, knowledge_dir: Path) -> None:
         rel_path = file_path.relative_to(knowledge_dir)
         uri = f"knowledge://{rel_path}"
 
-        # Create a closure to capture the file path
-        def _make_reader(fp: Path):
+        def _make_reader(fp: Path, rp: Path):
             def read_file() -> str:
                 return fp.read_text(encoding="utf-8", errors="replace")
 
-            read_file.__doc__ = f"Read knowledge base file: {rel_path}"
-            read_file.__name__ = f"kb_{rel_path.stem}"
+            read_file.__doc__ = f"Read knowledge base file: {rp}"
+            read_file.__name__ = f"kb_{rp.stem}"
             return read_file
 
-        mcp.resource(uri)(_make_reader(file_path))
+        mcp.resource(uri)(_make_reader(file_path, rel_path))
         logger.info("Registered knowledge: %s", uri)
+        count += 1
+
+    return count
 
 
 def _import_module(path: Path) -> types.ModuleType | None:

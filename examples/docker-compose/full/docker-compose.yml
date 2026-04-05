@@ -1,0 +1,38 @@
+services:
+  minio:
+    image: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mcp-server:
+    image: docker.io/helmforge/fastmcp-server:0.2.0
+    ports:
+      - "8000:8000"
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ../../tools:/app/inline/tools:ro
+      - ../../resources:/app/inline/resources:ro
+      - ../../prompts:/app/inline/prompts:ro
+    environment:
+      MCP_SERVER_NAME: full-mcp-server
+      MCP_AUTH_TYPE: bearer
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-changeme}
+      SOURCE_S3_ENABLED: "true"
+      SOURCE_S3_ENDPOINT: http://minio:9000
+      SOURCE_S3_BUCKET: mcp-tools
+      SOURCE_S3_REGION: us-east-1
+      SOURCE_S3_ACCESS_KEY: minioadmin
+      SOURCE_S3_SECRET_KEY: minioadmin
+      SOURCE_GIT_ENABLED: "false"
