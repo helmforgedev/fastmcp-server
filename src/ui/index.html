@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FastMCP Server</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
+
+  <!-- Navigation -->
+  <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-sm">M</div>
+      <span class="font-semibold text-lg">FastMCP Server</span>
+      <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded" x-text="info.version || '...'"></span>
+    </div>
+    <div class="flex gap-1">
+      <template x-for="tab in tabs" :key="tab.id">
+        <button
+          @click="currentTab = tab.id"
+          :class="currentTab === tab.id ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'"
+          class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+          x-text="tab.label">
+        </button>
+      </template>
+    </div>
+    <div class="flex items-center gap-2 text-xs text-gray-500">
+      <span x-show="info.auth_type && info.auth_type !== 'none'" class="bg-green-900 text-green-300 px-2 py-0.5 rounded">
+        Auth: <span x-text="info.auth_type"></span>
+      </span>
+      <span class="bg-gray-800 px-2 py-0.5 rounded" x-text="'Uptime: ' + formatUptime(info.uptime_seconds)"></span>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <main class="max-w-7xl mx-auto px-6 py-6">
+
+    <!-- Dashboard -->
+    <div x-show="currentTab === 'dashboard'" x-cloak class="fade-in">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <template x-for="card in dashboardCards" :key="card.label">
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+            <div class="text-3xl font-bold" :class="card.color" x-text="card.value"></div>
+            <div class="text-sm text-gray-400 mt-1" x-text="card.label"></div>
+          </div>
+        </template>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Server Info -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+          <h3 class="font-semibold mb-3 text-gray-300">Server Information</h3>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-gray-500">Name</span><span x-text="info.server || '-'"></span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Version</span><span x-text="info.version || '-'"></span></div>
+            <div class="flex justify-between"><span class="text-gray-500">FastMCP</span><span x-text="info.fastmcp_version || '-'"></span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Auth</span><span x-text="info.auth_type || 'none'"></span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Uptime</span><span x-text="formatUptime(info.uptime_seconds)"></span></div>
+          </div>
+        </div>
+
+        <!-- Sources Status -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+          <h3 class="font-semibold mb-3 text-gray-300">Sources</h3>
+          <div class="space-y-2 text-sm" x-show="info.sources">
+            <template x-for="(status, name) in info.sources || {}" :key="name">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-400 capitalize" x-text="name"></span>
+                <span class="px-2 py-0.5 rounded text-xs"
+                  :class="status.status === 'loaded' || status.status === 'synced' || status.status === 'cloned'
+                    ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'"
+                  x-text="status.status || 'unknown'"></span>
+              </div>
+            </template>
+          </div>
+          <p x-show="!info.sources || Object.keys(info.sources).length === 0" class="text-gray-600 text-sm">No sources configured</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools -->
+    <div x-show="currentTab === 'tools'" x-cloak class="fade-in">
+      <div class="mb-4 flex items-center gap-3">
+        <input type="text" x-model="toolSearch" placeholder="Search tools..."
+          class="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm w-72 focus:outline-none focus:border-indigo-500">
+        <span class="text-sm text-gray-500" x-text="filteredTools.length + ' tools'"></span>
+      </div>
+      <div class="space-y-3">
+        <template x-for="tool in filteredTools" :key="tool.name">
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h3 class="font-mono font-semibold text-indigo-400" x-text="tool.name"></h3>
+                <p class="text-sm text-gray-400 mt-1" x-text="tool.description || 'No description'"></p>
+              </div>
+              <div class="flex gap-1">
+                <template x-for="tag in (tool.tags || [])" :key="tag">
+                  <span class="bg-indigo-900/50 text-indigo-300 text-xs px-2 py-0.5 rounded" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+            <div x-show="tool.parameters" class="mt-3">
+              <div class="text-xs text-gray-500 mb-1">Parameters</div>
+              <pre class="bg-gray-950 rounded-lg p-3 text-xs text-gray-300 overflow-auto max-h-48"
+                x-text="JSON.stringify(tool.parameters, null, 2)"></pre>
+            </div>
+            <div class="flex gap-3 mt-2 text-xs text-gray-500">
+              <span x-show="tool.timeout">Timeout: <span x-text="tool.timeout + 's'"></span></span>
+              <span x-show="tool.annotations">Annotations: <span x-text="JSON.stringify(tool.annotations)"></span></span>
+            </div>
+          </div>
+        </template>
+        <p x-show="filteredTools.length === 0" class="text-gray-600 text-center py-8">No tools registered</p>
+      </div>
+    </div>
+
+    <!-- Resources -->
+    <div x-show="currentTab === 'resources'" x-cloak class="fade-in">
+      <div class="mb-4">
+        <span class="text-sm text-gray-500" x-text="resources.length + ' resources'"></span>
+      </div>
+      <div class="space-y-3">
+        <template x-for="res in resources" :key="res.uri">
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+            <div class="flex items-start justify-between">
+              <div>
+                <h3 class="font-mono text-green-400 text-sm" x-text="res.uri"></h3>
+                <p class="text-sm text-gray-400 mt-1" x-text="res.description || res.name || ''"></p>
+              </div>
+              <div class="flex gap-2">
+                <span x-show="res.is_template" class="bg-purple-900/50 text-purple-300 text-xs px-2 py-0.5 rounded">template</span>
+                <span class="text-xs text-gray-600" x-text="res.mime_type"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p x-show="resources.length === 0" class="text-gray-600 text-center py-8">No resources registered</p>
+      </div>
+    </div>
+
+    <!-- Prompts -->
+    <div x-show="currentTab === 'prompts'" x-cloak class="fade-in">
+      <div class="mb-4">
+        <span class="text-sm text-gray-500" x-text="prompts.length + ' prompts'"></span>
+      </div>
+      <div class="space-y-3">
+        <template x-for="prompt in prompts" :key="prompt.name">
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+            <h3 class="font-mono font-semibold text-amber-400" x-text="prompt.name"></h3>
+            <p class="text-sm text-gray-400 mt-1" x-text="prompt.description || 'No description'"></p>
+          </div>
+        </template>
+        <p x-show="prompts.length === 0" class="text-gray-600 text-center py-8">No prompts registered</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center text-xs text-gray-700 py-4 border-t border-gray-900">
+    FastMCP Server &middot; Powered by <a href="https://helmforge.dev" class="text-gray-500 hover:text-gray-300">HelmForge</a>
+  </footer>
+
+<script>
+function app() {
+  return {
+    currentTab: 'dashboard',
+    tabs: [
+      { id: 'dashboard', label: 'Dashboard' },
+      { id: 'tools', label: 'Tools' },
+      { id: 'resources', label: 'Resources' },
+      { id: 'prompts', label: 'Prompts' },
+    ],
+    info: {},
+    tools: [],
+    resources: [],
+    prompts: [],
+    toolSearch: '',
+    refreshInterval: null,
+
+    get dashboardCards() {
+      const c = this.info.counts || {};
+      return [
+        { label: 'Tools', value: c.tools || 0, color: 'text-indigo-400' },
+        { label: 'Resources', value: c.resources || 0, color: 'text-green-400' },
+        { label: 'Prompts', value: c.prompts || 0, color: 'text-amber-400' },
+        { label: 'Sources', value: Object.keys(this.info.sources || {}).length, color: 'text-cyan-400' },
+      ];
+    },
+
+    get filteredTools() {
+      if (!this.toolSearch) return this.tools;
+      const q = this.toolSearch.toLowerCase();
+      return this.tools.filter(t =>
+        t.name.toLowerCase().includes(q) ||
+        (t.description || '').toLowerCase().includes(q) ||
+        (t.tags || []).some(tag => tag.toLowerCase().includes(q))
+      );
+    },
+
+    async init() {
+      await this.refresh();
+      this.refreshInterval = setInterval(() => this.refresh(), 15000);
+    },
+
+    async refresh() {
+      try {
+        const [infoRes, toolsRes, resourcesRes, promptsRes] = await Promise.all([
+          fetch('/api/info'),
+          fetch('/api/tools'),
+          fetch('/api/resources'),
+          fetch('/api/prompts'),
+        ]);
+        if (infoRes.ok) this.info = await infoRes.json();
+        if (toolsRes.ok) this.tools = await toolsRes.json();
+        if (resourcesRes.ok) this.resources = await resourcesRes.json();
+        if (promptsRes.ok) this.prompts = await promptsRes.json();
+      } catch (e) {
+        console.error('Failed to refresh:', e);
+      }
+    },
+
+    formatUptime(seconds) {
+      if (!seconds) return '-';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    },
+  };
+}
+</script>
+</body>
+</html>
