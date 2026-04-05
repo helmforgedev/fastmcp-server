@@ -174,7 +174,6 @@ def _sync_oci(workspace: Path) -> None:
     if username and password:
         cmd.extend(["--username", username, "--password", password])
 
-
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error("OCI pull failed: %s", result.stderr.strip())
