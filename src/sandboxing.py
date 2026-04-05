@@ -106,7 +106,9 @@ def sandbox_tool(
                 result = _truncate_output(result, output_limit)
             return result
         except MemoryError:
-            logger.error("Tool '%s' exceeded memory limit of %dMB", tool_name, mem_limit)
+            logger.error(
+                "Tool '%s' exceeded memory limit of %dMB", tool_name, mem_limit
+            )
             return f"Error: Tool '{tool_name}' exceeded memory limit ({mem_limit}MB)"
         finally:
             if mem_limit > 0:
@@ -122,7 +124,9 @@ def sandbox_tool(
                 result = _truncate_output(result, output_limit)
             return result
         except MemoryError:
-            logger.error("Tool '%s' exceeded memory limit of %dMB", tool_name, mem_limit)
+            logger.error(
+                "Tool '%s' exceeded memory limit of %dMB", tool_name, mem_limit
+            )
             return f"Error: Tool '{tool_name}' exceeded memory limit ({mem_limit}MB)"
         finally:
             if mem_limit > 0:

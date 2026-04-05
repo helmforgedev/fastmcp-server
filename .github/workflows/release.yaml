@@ -143,14 +143,14 @@ jobs:
           cosign sign --yes docker.io/helmforge/fastmcp-server@${DIGEST}
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: docker.io/helmforge/fastmcp-server:${{ needs.release.outputs.new_version }}
           format: table
           severity: CRITICAL,HIGH
 
       - name: Generate SBOM
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: docker.io/helmforge/fastmcp-server:${{ needs.release.outputs.new_version }}
           format: cyclonedx
