@@ -37,8 +37,27 @@
         Auth: <span x-text="info.auth_type"></span>
       </span>
       <span class="bg-gray-800 px-2 py-0.5 rounded" x-text="'Uptime: ' + formatUptime(info.uptime_seconds)"></span>
+      <button x-show="authToken" @click="logout()" class="text-gray-400 hover:text-red-400 transition-colors px-2 py-0.5 rounded hover:bg-gray-800">Logout</button>
     </div>
   </nav>
+
+  <!-- Auth Login -->
+  <div x-show="authRequired" x-cloak class="fixed inset-0 bg-gray-950/90 flex items-center justify-center z-50">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl p-8 w-full max-w-sm">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-sm">M</div>
+        <span class="font-semibold text-lg">Authentication Required</span>
+      </div>
+      <label class="block text-sm text-gray-400 mb-2">Bearer Token</label>
+      <input type="password" x-model="tokenInput" @keydown.enter="submitToken()"
+        placeholder="Enter your bearer token"
+        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 mb-4">
+      <button @click="submitToken()"
+        class="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg py-2.5 text-sm font-medium transition-colors">
+        Connect
+      </button>
+    </div>
+  </div>
 
   <!-- Content -->
   <main class="max-w-7xl mx-auto px-6 py-6">
@@ -171,6 +190,9 @@
 
 <script>
 function app() {
+  // Derive base path from current URL: /helmforge/ui -> /helmforge
+  const basePath = window.location.pathname.replace(/\/ui\/?.*$/, '');
+
   return {
     currentTab: 'dashboard',
     tabs: [
@@ -185,6 +207,9 @@ function app() {
     prompts: [],
     toolSearch: '',
     refreshInterval: null,
+    authToken: sessionStorage.getItem('mcp_auth_token') || '',
+    authRequired: false,
+    tokenInput: '',
 
     get dashboardCards() {
       const c = this.info.counts || {};
@@ -208,17 +233,50 @@ function app() {
 
     async init() {
       await this.refresh();
+      if (!this.authRequired) {
+        this.refreshInterval = setInterval(() => this.refresh(), 15000);
+      }
+    },
+
+    submitToken() {
+      this.authToken = this.tokenInput;
+      sessionStorage.setItem('mcp_auth_token', this.authToken);
+      this.authRequired = false;
+      this.refresh();
       this.refreshInterval = setInterval(() => this.refresh(), 15000);
+    },
+
+    logout() {
+      this.authToken = '';
+      this.tokenInput = '';
+      sessionStorage.removeItem('mcp_auth_token');
+      this.authRequired = true;
+      this.info = {};
+      this.tools = [];
+      this.resources = [];
+      this.prompts = [];
+      if (this.refreshInterval) clearInterval(this.refreshInterval);
+    },
+
+    _headers() {
+      const h = {};
+      if (this.authToken) h['Authorization'] = `Bearer ${this.authToken}`;
+      return h;
     },
 
     async refresh() {
       try {
+        const headers = this._headers();
         const [infoRes, toolsRes, resourcesRes, promptsRes] = await Promise.all([
-          fetch('/api/info'),
-          fetch('/api/tools'),
-          fetch('/api/resources'),
-          fetch('/api/prompts'),
+          fetch(`${basePath}/api/info`, { headers }),
+          fetch(`${basePath}/api/tools`, { headers }),
+          fetch(`${basePath}/api/resources`, { headers }),
+          fetch(`${basePath}/api/prompts`, { headers }),
         ]);
+        if (infoRes.status === 401) {
+          this.authRequired = true;
+          return;
+        }
         if (infoRes.ok) this.info = await infoRes.json();
         if (toolsRes.ok) this.tools = await toolsRes.json();
         if (resourcesRes.ok) this.resources = await resourcesRes.json();

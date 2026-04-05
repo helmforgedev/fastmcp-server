@@ -26,9 +26,9 @@ RUN apt-get update && \
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Create non-root user before copying app files
+# Create non-root user with writable home (needed for pip runtime installs)
 RUN groupadd --gid 1000 mcpuser && \
-    useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin mcpuser
+    useradd --uid 1000 --gid 1000 --create-home --home-dir /home/mcpuser --shell /usr/sbin/nologin mcpuser
 
 WORKDIR /app
 

@@ -22,6 +22,24 @@ _mcp = None
 _started_at = None
 _source_info = {}
 
+_UNAUTHORIZED = JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+def _check_auth(request: Request) -> bool:
+    """Check authentication for API requests.
+
+    Returns True when the request is authorized (or auth is disabled).
+    """
+    auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
+    if auth_type == "none":
+        return True
+    if auth_type == "bearer":
+        token = os.environ.get("MCP_AUTH_TOKEN", "")
+        header = request.headers.get("authorization", "")
+        return header == f"Bearer {token}"
+    # JWT and other types: delegate to MCP endpoint only
+    return True
+
 
 def init_api(mcp, source_info: dict | None = None) -> None:
     """Initialize API with FastMCP instance reference."""
@@ -46,6 +64,8 @@ def _get_fastmcp_version() -> str:
 
 async def debug_info(request: Request) -> JSONResponse:
     """Diagnostic endpoint with full server information."""
+    if not _check_auth(request):
+        return _UNAUTHORIZED
     if _mcp is None:
         return JSONResponse({"error": "server not initialized"}, status_code=503)
 
@@ -101,6 +121,8 @@ async def debug_info(request: Request) -> JSONResponse:
 
 async def api_info(request: Request) -> JSONResponse:
     """Server overview for UI dashboard."""
+    if not _check_auth(request):
+        return _UNAUTHORIZED
     if _mcp is None:
         return JSONResponse({"error": "server not initialized"}, status_code=503)
 
@@ -131,16 +153,22 @@ async def api_info(request: Request) -> JSONResponse:
 
 async def api_tools(request: Request) -> JSONResponse:
     """List all registered tools with schemas."""
+    if not _check_auth(request):
+        return _UNAUTHORIZED
     return JSONResponse(_extract_tools())
 
 
 async def api_resources(request: Request) -> JSONResponse:
     """List all registered resources."""
+    if not _check_auth(request):
+        return _UNAUTHORIZED
     return JSONResponse(_extract_resources())
 
 
 async def api_prompts(request: Request) -> JSONResponse:
     """List all registered prompts."""
+    if not _check_auth(request):
+        return _UNAUTHORIZED
     return JSONResponse(_extract_prompts())
 
 
