@@ -22,6 +22,7 @@ from health import (
     readyz,
     startupz,
 )
+from gateway import is_gateway_mode, mount_remote_servers
 from hot_reload import start_watcher
 from loader import sync_sources
 from logging_config import configure_logging
@@ -29,6 +30,7 @@ from metrics import init_metrics, is_enabled as metrics_enabled, set_component_c
 from periodic_sync import start_periodic_sync
 from reload_endpoint import init_reload, reload_endpoint
 from server_builder import build_server, rebuild_components
+from visibility import apply_visibility
 
 # Configure logging first
 configure_logging()
@@ -146,7 +148,18 @@ def main() -> None:
     mcp, counts = build_server(workspace)
     mark_components_loaded(counts)
 
-    # Step 5: Print startup banner
+    # Step 5: Apply visibility rules
+    apply_visibility(mcp)
+
+    # Step 6: Mount remote servers (gateway mode)
+    mounted_servers = []
+    if is_gateway_mode():
+        import asyncio
+
+        mounted_servers = asyncio.run(mount_remote_servers(mcp))
+        logger.info("Gateway mode: %d remote server(s) mounted", len(mounted_servers))
+
+    # Step 7: Print startup banner
     _print_banner(server_name, **counts)
 
     # Step 6: Set metrics gauges
