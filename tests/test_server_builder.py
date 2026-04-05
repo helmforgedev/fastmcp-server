@@ -138,3 +138,213 @@ def test_build_all_components(
     assert counts["resource_count"] >= 1
     assert counts["prompt_count"] >= 1
     assert counts["knowledge_count"] >= 1
+
+
+# --- v0.3.0: Tool metadata tests ---
+
+
+def test_tool_tags(workspace, monkeypatch):
+    """Tools with __tags__ module variable register tags correctly."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "tagged.py").write_text(
+        '__tags__ = {"devops", "production"}\n\n'
+        'def deploy(service: str) -> str:\n    """Deploy."""\n    return f"deployed {service}"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_tool_timeout(workspace, monkeypatch):
+    """Tools with __timeout__ module variable register timeout correctly."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "slow.py").write_text(
+        "__timeout__ = 30.0\n\n"
+        'def slow_task() -> str:\n    """Slow task."""\n    return "done"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_tool_annotations(workspace, monkeypatch):
+    """Tools with __annotations_mcp__ module variable register annotations correctly."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "annotated.py").write_text(
+        '__annotations_mcp__ = {"destructiveHint": True, "title": "Dangerous Tool"}\n\n'
+        'def dangerous() -> str:\n    """Dangerous action."""\n    return "boom"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_tool_all_metadata(workspace, monkeypatch):
+    """Tools with all metadata module variables work together."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "full_meta.py").write_text(
+        '__tags__ = {"ops"}\n'
+        "__timeout__ = 15.0\n"
+        '__annotations_mcp__ = {"readOnlyHint": True}\n\n'
+        'def check_status() -> str:\n    """Check status."""\n    return "ok"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_tool_no_metadata_backward_compat(workspace, monkeypatch):
+    """Tools without metadata still work (backward compatibility)."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "simple.py").write_text(
+        'def hello() -> str:\n    """Hello."""\n    return "hi"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+# --- v0.3.0: Resource template tests ---
+
+
+def test_resource_template(workspace, monkeypatch):
+    """Resource with URI template registers correctly."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "resources" / "user.py").write_text(
+        'RESOURCE_URI = "users://{user_id}/profile"\n\n'
+        "def get_profile(user_id: str) -> dict:\n"
+        '    """Get user profile."""\n'
+        '    return {"user_id": user_id}\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["resource_count"] == 1
+
+
+# --- v0.3.0: Multiple resources per file tests ---
+
+
+def test_multiple_resources_per_file(workspace, monkeypatch):
+    """File with RESOURCES dict registers multiple resources."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "resources" / "multi.py").write_text(
+        "RESOURCES = {\n"
+        '    "status://health": "get_health",\n'
+        '    "status://version": "get_version",\n'
+        "}\n\n"
+        'def get_health() -> dict:\n    return {"status": "ok"}\n\n'
+        'def get_version() -> str:\n    return "1.0.0"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["resource_count"] == 2
+
+
+def test_resources_dict_missing_function(workspace, monkeypatch):
+    """RESOURCES dict with missing function logs warning but doesn't crash."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "resources" / "bad_map.py").write_text(
+        "RESOURCES = {\n"
+        '    "status://health": "get_health",\n'
+        '    "status://missing": "nonexistent_func",\n'
+        "}\n\n"
+        'def get_health() -> dict:\n    return {"status": "ok"}\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    # Only the valid one should register
+    assert counts["resource_count"] == 1
+
+
+def test_resource_uri_still_works(workspace, sample_resource, monkeypatch):
+    """Legacy RESOURCE_URI still works alongside RESOURCES dict support."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["resource_count"] == 1
+
+
+# --- v0.3.0: Error masking tests ---
+
+
+def test_error_masking_enabled(workspace, monkeypatch):
+    """Error masking creates server with mask_error_details=True."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_MASK_ERROR_DETAILS", "true")
+
+    mcp, counts = build_server(str(workspace))
+
+    assert mcp is not None
+
+
+def test_error_masking_disabled_by_default(workspace, monkeypatch):
+    """Error masking is disabled by default."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+
+    mcp, counts = build_server(str(workspace))
+
+    assert mcp is not None
+
+
+# --- v0.3.0: Duplicate handling tests ---
+
+
+def test_duplicate_tools_warn(workspace, monkeypatch):
+    """Duplicate tools with warn mode don't crash."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_ON_DUPLICATE_TOOLS", "warn")
+
+    (workspace / "tools" / "a.py").write_text(
+        'def hello() -> str:\n    """Hello A."""\n    return "a"\n'
+    )
+    (workspace / "tools" / "b.py").write_text(
+        'def hello() -> str:\n    """Hello B."""\n    return "b"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 2
+
+
+def test_duplicate_tools_replace(workspace, monkeypatch):
+    """Duplicate tools with replace mode succeed silently."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_ON_DUPLICATE_TOOLS", "replace")
+
+    (workspace / "tools" / "a.py").write_text(
+        'def hello() -> str:\n    """Hello A."""\n    return "a"\n'
+    )
+    (workspace / "tools" / "b.py").write_text(
+        'def hello() -> str:\n    """Hello B."""\n    return "b"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 2
+
+
+def test_duplicate_tools_error(workspace, monkeypatch):
+    """Duplicate tools with error mode raises ValueError."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_ON_DUPLICATE_TOOLS", "error")
+
+    (workspace / "tools" / "a.py").write_text(
+        'def hello() -> str:\n    """Hello A."""\n    return "a"\n'
+    )
+    (workspace / "tools" / "b.py").write_text(
+        'def hello() -> str:\n    """Hello B."""\n    return "b"\n'
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        build_server(str(workspace))

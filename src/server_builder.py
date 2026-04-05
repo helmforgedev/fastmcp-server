@@ -29,7 +29,22 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
 
     # Configure authentication
     auth = _build_auth()
-    mcp = FastMCP(name=server_name, auth=auth) if auth else FastMCP(name=server_name)
+
+    # Server-level options
+    server_kwargs: dict = {"name": server_name}
+    if auth:
+        server_kwargs["auth"] = auth
+
+    # Error masking (v0.3.0)
+    if os.environ.get("MCP_MASK_ERROR_DETAILS", "false").lower() == "true":
+        server_kwargs["mask_error_details"] = True
+
+    # Duplicate handling (v0.3.0)
+    dup_mode = os.environ.get("MCP_ON_DUPLICATE_TOOLS", "").lower()
+    if dup_mode in ("warn", "error", "replace", "ignore"):
+        server_kwargs["on_duplicate"] = dup_mode
+
+    mcp = FastMCP(**server_kwargs)
 
     # Load components and track counts
     tool_count = _load_tools(mcp, ws / "tools")
@@ -101,13 +116,30 @@ def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
         if module is None:
             continue
 
+        # Read optional module-level metadata (v0.3.0)
+        mod_tags = getattr(module, "__tags__", None)
+        mod_timeout = getattr(module, "__timeout__", None)
+        mod_annotations = getattr(module, "__annotations_mcp__", None)
+
         registered = False
         for name in dir(module):
             if name.startswith("_"):
                 continue
             obj = getattr(module, name)
             if callable(obj) and isinstance(obj, types.FunctionType):
-                mcp.tool(obj)
+                # Build kwargs for mcp.tool()
+                tool_kwargs: dict = {}
+                if mod_tags is not None:
+                    tool_kwargs["tags"] = set(mod_tags)
+                if mod_timeout is not None:
+                    tool_kwargs["timeout"] = float(mod_timeout)
+                if mod_annotations is not None:
+                    tool_kwargs["annotations"] = dict(mod_annotations)
+
+                if tool_kwargs:
+                    mcp.tool(obj, **tool_kwargs)
+                else:
+                    mcp.tool(obj)
                 logger.info("Registered tool: %s (from %s)", name, py_file.name)
                 count += 1
                 registered = True
@@ -129,9 +161,28 @@ def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
         if module is None:
             continue
 
+        # v0.3.0: Support RESOURCES dict for multiple resources per file
+        resources_map = getattr(module, "RESOURCES", None)
+        if isinstance(resources_map, dict):
+            for uri, func_name in resources_map.items():
+                func = getattr(module, func_name, None)
+                if func and callable(func):
+                    mcp.resource(uri)(func)
+                    logger.info("Registered resource: %s -> %s", uri, func_name)
+                    count += 1
+                else:
+                    logger.warning(
+                        "RESOURCES maps '%s' to '%s' but function not found in %s",
+                        uri,
+                        func_name,
+                        py_file.name,
+                    )
+            continue
+
+        # Legacy: single resource via RESOURCE_URI
         resource_uri = getattr(module, "RESOURCE_URI", None)
         if not resource_uri:
-            logger.warning("No RESOURCE_URI in %s, skipping", py_file.name)
+            logger.warning("No RESOURCE_URI or RESOURCES in %s, skipping", py_file.name)
             continue
 
         for name in dir(module):
