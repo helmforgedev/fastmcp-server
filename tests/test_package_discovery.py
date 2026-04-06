@@ -34,7 +34,13 @@ def _make_entry_point(name, module):
     return ep
 
 
+def _noop_reload(module):
+    """No-op reload to prevent importlib.reload from destroying mocks."""
+    return module
+
+
 class TestDiscoverToolPackages:
+    @patch("importlib.reload", _noop_reload)
     @patch("importlib.metadata.entry_points")
     def test_discovers_packages(self, mock_ep, fake_module):
         mock_ep.return_value = [_make_entry_point("kubernetes", fake_module)]
@@ -45,6 +51,7 @@ class TestDiscoverToolPackages:
         assert result[0]["name"] == "kubernetes"
         assert result[0]["file_count"] == 2
 
+    @patch("importlib.reload", _noop_reload)
     @patch("importlib.metadata.entry_points")
     def test_excludes_init_files(self, mock_ep, fake_module):
         mock_ep.return_value = [_make_entry_point("kubernetes", fake_module)]
@@ -54,6 +61,7 @@ class TestDiscoverToolPackages:
 
         assert "__init__.py" not in filenames
 
+    @patch("importlib.reload", _noop_reload)
     @patch("importlib.metadata.entry_points")
     def test_skips_missing_tools_dir(self, mock_ep):
         mod = ModuleType("bad")
@@ -64,6 +72,7 @@ class TestDiscoverToolPackages:
 
         assert len(result) == 0
 
+    @patch("importlib.reload", _noop_reload)
     @patch("importlib.metadata.entry_points")
     def test_skips_empty_tools_dir(self, mock_ep, tmp_path):
         d = tmp_path / "empty"
@@ -77,6 +86,7 @@ class TestDiscoverToolPackages:
 
         assert len(result) == 0
 
+    @patch("importlib.reload", _noop_reload)
     @patch("importlib.metadata.entry_points")
     def test_handles_load_error(self, mock_ep):
         ep = MagicMock()
@@ -89,8 +99,9 @@ class TestDiscoverToolPackages:
         assert len(result) == 0
 
     def test_returns_empty_when_no_entry_points(self):
-        with patch(
-            "importlib.metadata.entry_points", side_effect=Exception("no group")
+        with (
+            patch("importlib.reload", _noop_reload),
+            patch("importlib.metadata.entry_points", side_effect=Exception("no group")),
         ):
             result = discover_tool_packages()
             assert result == []
