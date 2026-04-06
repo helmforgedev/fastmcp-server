@@ -1,6 +1,6 @@
 """Tests for package_discovery module."""
 
-from types import ModuleType
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,31 +19,21 @@ def tool_dir(tmp_path):
     return d
 
 
-@pytest.fixture
-def fake_module(tool_dir):
-    """Create a fake module with TOOLS_DIR attribute."""
-    mod = ModuleType("tools.kubernetes")
-    mod.TOOLS_DIR = tool_dir
-    return mod
-
-
-def _make_entry_point(name, module):
-    ep = MagicMock()
-    ep.name = name
-    ep.load.return_value = module
-    return ep
-
-
-def _noop_reload(module):
-    """No-op reload to prevent importlib.reload from destroying mocks."""
-    return module
+def _subprocess_result(packages, returncode=0, stderr=""):
+    """Create a mock subprocess result with JSON output."""
+    result = MagicMock()
+    result.returncode = returncode
+    result.stdout = json.dumps(packages)
+    result.stderr = stderr
+    return result
 
 
 class TestDiscoverToolPackages:
-    @patch("importlib.reload", _noop_reload)
-    @patch("importlib.metadata.entry_points")
-    def test_discovers_packages(self, mock_ep, fake_module):
-        mock_ep.return_value = [_make_entry_point("kubernetes", fake_module)]
+    @patch("package_discovery.subprocess.run")
+    def test_discovers_packages(self, mock_run, tool_dir):
+        mock_run.return_value = _subprocess_result(
+            [{"name": "kubernetes", "tools_dir": str(tool_dir)}]
+        )
 
         result = discover_tool_packages()
 
@@ -51,60 +41,55 @@ class TestDiscoverToolPackages:
         assert result[0]["name"] == "kubernetes"
         assert result[0]["file_count"] == 2
 
-    @patch("importlib.reload", _noop_reload)
-    @patch("importlib.metadata.entry_points")
-    def test_excludes_init_files(self, mock_ep, fake_module):
-        mock_ep.return_value = [_make_entry_point("kubernetes", fake_module)]
+    @patch("package_discovery.subprocess.run")
+    def test_excludes_init_files(self, mock_run, tool_dir):
+        mock_run.return_value = _subprocess_result(
+            [{"name": "kubernetes", "tools_dir": str(tool_dir)}]
+        )
 
         result = discover_tool_packages()
         filenames = [f.name for f in result[0]["files"]]
 
         assert "__init__.py" not in filenames
 
-    @patch("importlib.reload", _noop_reload)
-    @patch("importlib.metadata.entry_points")
-    def test_skips_missing_tools_dir(self, mock_ep):
-        mod = ModuleType("bad")
-        mod.TOOLS_DIR = None
-        mock_ep.return_value = [_make_entry_point("bad", mod)]
+    @patch("package_discovery.subprocess.run")
+    def test_skips_missing_tools_dir(self, mock_run, tmp_path):
+        mock_run.return_value = _subprocess_result(
+            [{"name": "bad", "tools_dir": str(tmp_path / "nonexistent")}]
+        )
 
         result = discover_tool_packages()
 
         assert len(result) == 0
 
-    @patch("importlib.reload", _noop_reload)
-    @patch("importlib.metadata.entry_points")
-    def test_skips_empty_tools_dir(self, mock_ep, tmp_path):
+    @patch("package_discovery.subprocess.run")
+    def test_skips_empty_tools_dir(self, mock_run, tmp_path):
         d = tmp_path / "empty"
         d.mkdir()
         (d / "__init__.py").write_text("")
-        mod = ModuleType("empty")
-        mod.TOOLS_DIR = d
-        mock_ep.return_value = [_make_entry_point("empty", mod)]
+        mock_run.return_value = _subprocess_result(
+            [{"name": "empty", "tools_dir": str(d)}]
+        )
 
         result = discover_tool_packages()
 
         assert len(result) == 0
 
-    @patch("importlib.reload", _noop_reload)
-    @patch("importlib.metadata.entry_points")
-    def test_handles_load_error(self, mock_ep):
-        ep = MagicMock()
-        ep.name = "broken"
-        ep.load.side_effect = ImportError("no module")
-        mock_ep.return_value = [ep]
+    @patch("package_discovery.subprocess.run")
+    def test_handles_subprocess_failure(self, mock_run):
+        mock_run.return_value = _subprocess_result([], returncode=1, stderr="error")
 
         result = discover_tool_packages()
 
         assert len(result) == 0
 
-    def test_returns_empty_when_no_entry_points(self):
-        with (
-            patch("importlib.reload", _noop_reload),
-            patch("importlib.metadata.entry_points", side_effect=Exception("no group")),
-        ):
-            result = discover_tool_packages()
-            assert result == []
+    @patch("package_discovery.subprocess.run")
+    def test_handles_subprocess_exception(self, mock_run):
+        mock_run.side_effect = Exception("timeout")
+
+        result = discover_tool_packages()
+
+        assert result == []
 
 
 class TestInstallDiscoveredTools:
