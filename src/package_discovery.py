@@ -11,74 +11,92 @@ The entrypoint calls discover_tool_packages() after pip install,
 which copies discovered tool files into the workspace tools directory.
 """
 
+import json
 import logging
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger("fastmcp-server.package_discovery")
+
+# Subprocess script that discovers entry points in a fresh Python process.
+# This is necessary because Python 3.13's importlib.metadata caches the
+# package index at first import. Packages installed via subprocess pip
+# after process start are invisible to entry_points() even after
+# invalidate_caches() and reload(). A fresh process sees them correctly.
+_DISCOVER_SCRIPT = """\
+import json
+from importlib.metadata import entry_points
+
+result = []
+for ep in entry_points(group="fastmcp_tools"):
+    try:
+        module = ep.load()
+        tools_dir = getattr(module, "TOOLS_DIR", None)
+        if tools_dir is None:
+            continue
+        result.append({"name": ep.name, "tools_dir": str(tools_dir)})
+    except Exception:
+        pass
+print(json.dumps(result))
+"""
 
 
 def discover_tool_packages() -> list[dict]:
     """Discover installed fastmcp-tools-* packages via entry points.
 
-    Returns a list of dicts with keys: name, tools_dir, file_count.
+    Runs discovery in a subprocess to avoid importlib.metadata caching
+    issues with runtime-installed packages.
+
+    Returns a list of dicts with keys: name, tools_dir, file_count, files.
     """
-    discovered = []
-
     try:
-        import importlib
-        import importlib.metadata
+        result = subprocess.run(
+            [sys.executable, "-c", _DISCOVER_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning("Discovery subprocess failed: %s", result.stderr.strip())
+            return []
 
-        # Force fresh metadata scan after runtime pip installs.
-        # Without this, entry_points() returns stale (empty) results when
-        # packages were installed via subprocess pip after process start.
-        importlib.invalidate_caches()
-        importlib.reload(importlib.metadata)
-        from importlib.metadata import entry_points
-
-        eps = entry_points(group="fastmcp_tools")
-        logger.info("Entry points scan: found %d fastmcp_tools package(s)", len(eps))
+        raw = json.loads(result.stdout.strip())
     except Exception:
         logger.warning("Failed to scan fastmcp_tools entry points", exc_info=True)
-        return discovered
+        return []
 
-    for ep in eps:
-        try:
-            module = ep.load()
-            tools_dir = getattr(module, "TOOLS_DIR", None)
-            if tools_dir is None or not Path(tools_dir).is_dir():
-                logger.warning("Package '%s' has no valid TOOLS_DIR, skipping", ep.name)
-                continue
+    discovered = []
+    for pkg in raw:
+        tools_dir = Path(pkg["tools_dir"])
+        if not tools_dir.is_dir():
+            logger.warning("Package '%s' has no valid TOOLS_DIR, skipping", pkg["name"])
+            continue
 
-            tools_dir = Path(tools_dir)
-            py_files = list(tools_dir.glob("*.py"))
-            # Exclude __init__.py
-            py_files = [f for f in py_files if f.name != "__init__.py"]
-
-            if not py_files:
-                logger.warning(
-                    "Package '%s' has no tool files in %s", ep.name, tools_dir
-                )
-                continue
-
-            discovered.append(
-                {
-                    "name": ep.name,
-                    "tools_dir": tools_dir,
-                    "files": py_files,
-                    "file_count": len(py_files),
-                }
+        py_files = [f for f in tools_dir.glob("*.py") if f.name != "__init__.py"]
+        if not py_files:
+            logger.warning(
+                "Package '%s' has no tool files in %s", pkg["name"], tools_dir
             )
-            logger.info(
-                "Discovered tool package '%s': %d tool(s) at %s",
-                ep.name,
-                len(py_files),
-                tools_dir,
-            )
+            continue
 
-        except Exception:
-            logger.exception("Failed to load tool package '%s'", ep.name)
+        discovered.append(
+            {
+                "name": pkg["name"],
+                "tools_dir": tools_dir,
+                "files": py_files,
+                "file_count": len(py_files),
+            }
+        )
+        logger.info(
+            "Discovered tool package '%s': %d tool(s) at %s",
+            pkg["name"],
+            len(py_files),
+            tools_dir,
+        )
 
+    logger.info("Entry points scan: found %d fastmcp_tools package(s)", len(discovered))
     return discovered
 
 
