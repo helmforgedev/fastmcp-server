@@ -53,7 +53,10 @@ def _get_cached(tool_name: str, key: str, ttl: float) -> tuple[bool, object]:
     if tool_name not in _caches:
         return (False, None)
 
-    with _locks.get(tool_name, threading.Lock()):
+    if tool_name not in _locks:
+        _locks[tool_name] = threading.Lock()
+
+    with _locks[tool_name]:
         entry = _caches[tool_name].get(key)
         if entry is None:
             return (False, None)
