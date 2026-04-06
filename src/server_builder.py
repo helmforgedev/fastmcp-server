@@ -386,7 +386,7 @@ def _load_knowledge(mcp: FastMCP, knowledge_dir: Path) -> int:
             continue
 
         rel_path = file_path.relative_to(knowledge_dir)
-        uri = f"knowledge://{rel_path}"
+        uri = f"knowledge://{rel_path.as_posix()}"
 
         def _make_reader(fp: Path, rp: Path):
             def read_file() -> str:
