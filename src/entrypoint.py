@@ -67,8 +67,11 @@ def _install_extra_packages() -> None:
         logger.info("Extra packages installed successfully")
         # Invalidate caches so importlib.metadata sees newly installed packages
         import importlib
+        import importlib.metadata
 
         importlib.invalidate_caches()
+        # Reload importlib.metadata to clear its internal entry_points cache
+        importlib.reload(importlib.metadata)
 
 
 def _print_banner(
