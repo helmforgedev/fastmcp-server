@@ -26,11 +26,17 @@ def discover_tool_packages() -> list[dict]:
     discovered = []
 
     try:
-        from importlib.metadata import entry_points
+        import importlib
+        import importlib.metadata
 
-        eps = entry_points(group="fastmcp_tools")
+        # Force fresh metadata scan after runtime pip installs
+        importlib.invalidate_caches()
+        importlib.reload(importlib.metadata)
+
+        eps = importlib.metadata.entry_points(group="fastmcp_tools")
+        logger.info("Entry points scan: found %d fastmcp_tools package(s)", len(eps))
     except Exception:
-        logger.debug("No fastmcp_tools entry points found")
+        logger.warning("Failed to scan fastmcp_tools entry points", exc_info=True)
         return discovered
 
     for ep in eps:
