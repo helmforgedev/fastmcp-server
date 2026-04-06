@@ -99,8 +99,9 @@ class TestDiscoverToolPackages:
         assert len(result) == 0
 
     def test_returns_empty_when_no_entry_points(self):
-        with patch("importlib.reload", _noop_reload), patch(
-            "importlib.metadata.entry_points", side_effect=Exception("no group")
+        with (
+            patch("importlib.reload", _noop_reload),
+            patch("importlib.metadata.entry_points", side_effect=Exception("no group")),
         ):
             result = discover_tool_packages()
             assert result == []
