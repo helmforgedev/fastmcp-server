@@ -192,23 +192,29 @@ def analyze(data: str) -> ToolResult:
 Create a `.py` file in `resources/` with a `RESOURCE_URI` constant and a handler function:
 
 ```python
+import json
+
 RESOURCE_URI = "config://app"
 
-def get_config() -> dict:
+def get_config() -> str:
     """Application configuration."""
-    return {"version": "1.0", "env": "production"}
+    return json.dumps({"version": "1.0", "env": "production"}, indent=2)
 ```
+
+> **Important:** Resource handlers must return `str`, `bytes`, or `list[ResourceContent]`. Returning a `dict` directly will cause a serialization error.
 
 ### Resource Templates
 
 Use `{param}` placeholders in URIs for parameterized resources:
 
 ```python
+import json
+
 RESOURCE_URI = "users://{user_id}/profile"
 
-def get_profile(user_id: str) -> dict:
+def get_profile(user_id: str) -> str:
     """Get user profile by ID."""
-    return {"user_id": user_id, "name": f"User {user_id}"}
+    return json.dumps({"user_id": user_id, "name": f"User {user_id}"}, indent=2)
 ```
 
 ### Multiple Resources per File
@@ -216,13 +222,15 @@ def get_profile(user_id: str) -> dict:
 Use a `RESOURCES` dict to register multiple resources from one file:
 
 ```python
+import json
+
 RESOURCES = {
     "status://health": "get_health",
     "status://version": "get_version",
 }
 
-def get_health() -> dict:
-    return {"status": "ok"}
+def get_health() -> str:
+    return json.dumps({"status": "ok"}, indent=2)
 
 def get_version() -> str:
     return "1.0.0"
@@ -381,6 +389,66 @@ This script runs `sync_sources()` and exits. Use it as a Kubernetes init contain
 |---|---|
 | Docker / Docker Compose / Swarm | This README |
 | Kubernetes (Helm) | [helmforge/charts — fastmcp-server](https://helmforge.dev) |
+
+## Connecting MCP Clients
+
+Once your FastMCP server is running and accessible, connect AI assistants to it as an MCP server.
+
+### Claude Code
+
+Add the server to your Claude Code settings (`~/.claude/settings.json` or project `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "my-mcp-server": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+With bearer authentication:
+
+```json
+{
+  "mcpServers": {
+    "my-mcp-server": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
+```
+
+### Codex (VS Code Extension)
+
+Add to your Codex configuration file (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.my-mcp-server]
+enabled = true
+url = "https://mcp.example.com/mcp"
+
+[mcp_servers.my-mcp-server.http_headers]
+Authorization = "Bearer <your-token>"
+```
+
+Without authentication (development):
+
+```toml
+[mcp_servers.my-mcp-server]
+enabled = true
+url = "https://mcp.example.com/mcp"
+```
+
+### Local Development
+
+When running locally with Docker, use `http://localhost:8000/mcp` as the URL and omit authentication headers if `MCP_AUTH_TYPE=none`.
 
 ## License
 
