@@ -5,6 +5,8 @@ This replaces the single RESOURCE_URI pattern when you need
 multiple resources in one file.
 """
 
+import json
+
 RESOURCES = {
     "status://health": "get_health",
     "status://version": "get_version",
@@ -12,9 +14,9 @@ RESOURCES = {
 }
 
 
-def get_health() -> dict:
+def get_health() -> str:
     """Server health status."""
-    return {"status": "healthy", "checks": {"db": "ok", "cache": "ok"}}
+    return json.dumps({"status": "healthy", "checks": {"db": "ok", "cache": "ok"}}, indent=2)
 
 
 def get_version() -> str:
@@ -22,8 +24,8 @@ def get_version() -> str:
     return "1.0.0"
 
 
-def get_uptime() -> dict:
+def get_uptime() -> str:
     """Server uptime information."""
     import time
 
-    return {"uptime_seconds": int(time.time()), "started": "2026-01-01T00:00:00Z"}
+    return json.dumps({"uptime_seconds": int(time.time()), "started": "2026-01-01T00:00:00Z"}, indent=2)

@@ -1,10 +1,12 @@
+import json
+
 RESOURCE_URI = "config://app"
 
 
-def get_config() -> dict:
+def get_config() -> str:
     """Application configuration."""
-    return {
+    return json.dumps({
         "version": "1.0",
         "environment": "production",
         "features": ["tools", "resources", "prompts", "knowledge"],
-    }
+    }, indent=2)

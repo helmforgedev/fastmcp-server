@@ -31,8 +31,9 @@ def sample_resource(workspace):
     """Create a sample resource file in the workspace."""
     res_file = workspace / "resources" / "config.py"
     res_file.write_text(
+        "import json\n\n"
         'RESOURCE_URI = "config://app"\n\n'
-        'def get_config() -> dict:\n    """Config."""\n    return {"version": "1.0"}\n'
+        'def get_config() -> str:\n    """Config."""\n    return json.dumps({"version": "1.0"}, indent=2)\n'
     )
     return res_file
 
