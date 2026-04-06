@@ -29,11 +29,14 @@ def discover_tool_packages() -> list[dict]:
         import importlib
         import importlib.metadata
 
-        # Force fresh metadata scan after runtime pip installs
+        # Force fresh metadata scan after runtime pip installs.
+        # Without this, entry_points() returns stale (empty) results when
+        # packages were installed via subprocess pip after process start.
         importlib.invalidate_caches()
         importlib.reload(importlib.metadata)
+        from importlib.metadata import entry_points
 
-        eps = importlib.metadata.entry_points(group="fastmcp_tools")
+        eps = entry_points(group="fastmcp_tools")
         logger.info("Entry points scan: found %d fastmcp_tools package(s)", len(eps))
     except Exception:
         logger.warning("Failed to scan fastmcp_tools entry points", exc_info=True)
