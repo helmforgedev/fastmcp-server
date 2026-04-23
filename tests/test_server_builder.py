@@ -73,9 +73,7 @@ def test_imported_function_is_not_auto_registered(workspace, monkeypatch):
     (workspace / "tools" / "shared.py").write_text(
         'def shared_tool() -> str:\n    """Shared tool."""\n    return "shared"\n'
     )
-    (workspace / "tools" / "consumer.py").write_text(
-        "from shared import shared_tool\n"
-    )
+    (workspace / "tools" / "consumer.py").write_text("from shared import shared_tool\n")
 
     mcp, counts = build_server(str(workspace))
 
