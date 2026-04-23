@@ -127,7 +127,7 @@ For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
 
 ## Writing Tools
 
-Create a `.py` file in `tools/`. Every public function becomes an MCP tool:
+Create a `.py` file in `tools/`. By default, every public function defined in that module becomes an MCP tool:
 
 ```python
 def get_weather(city: str) -> str:
@@ -139,6 +139,28 @@ def roll_dice(sides: int = 6) -> int:
     """Roll a die with the given number of sides."""
     import random
     return random.randint(1, sides)
+```
+
+Utility modules are supported too. Files named like `*_helpers.py` are skipped by default. For any other utility module, keep helpers private (`_helper`) or disable auto-registration explicitly:
+
+```python
+__mcp_auto_register__ = False
+
+def evidence_true(data, *keys):
+    return True
+```
+
+If you want exact control over exports, declare a `TOOLS` allowlist:
+
+```python
+TOOLS = ["deploy"]
+
+def deploy(service: str, version: str) -> str:
+    """Deploy a service."""
+    return f"Deployed {service}@{version}"
+
+def helper() -> str:
+    return "not registered"
 ```
 
 ### Tool Metadata
