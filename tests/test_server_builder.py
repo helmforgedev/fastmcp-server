@@ -23,6 +23,65 @@ def test_build_with_multiple_tools(workspace, monkeypatch):
     assert counts["tool_count"] == 2
 
 
+def test_helper_module_without_docstrings_is_not_registered(workspace, monkeypatch):
+    """Public helper functions without docstrings should not become tools."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "evidence_helpers.py").write_text(
+        "def evidence_true(data, *keys):\n    return True\n\n"
+        "def notes_reviewed(data):\n    return True\n"
+    )
+    (workspace / "tools" / "real_tool.py").write_text(
+        'def check_release_readiness() -> dict:\n    """Check release readiness."""\n    return {"status": "PASS"}\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_tool_manifest_registers_selected_functions(workspace, monkeypatch):
+    """TOOLS manifest should allow explicit registration from mixed modules."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "manifested.py").write_text(
+        'TOOLS = ["hello"]\n\n'
+        'def hello() -> str:\n    return "hi"\n\n'
+        'def helper() -> str:\n    return "helper"\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_varargs_tool_is_skipped_instead_of_crashing(workspace, monkeypatch):
+    """Functions with *args or **kwargs should be skipped with no crash."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "bad_signature.py").write_text(
+        'TOOLS = ["bad", "good"]\n\n'
+        'def bad(*args) -> str:\n    """Bad signature."""\n    return "bad"\n\n'
+        'def good(name: str) -> str:\n    """Good signature."""\n    return name\n'
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
+def test_imported_function_is_not_auto_registered(workspace, monkeypatch):
+    """Imported helper functions should not become tools via auto-discovery."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    (workspace / "tools" / "shared.py").write_text(
+        'def shared_tool() -> str:\n    """Shared tool."""\n    return "shared"\n'
+    )
+    (workspace / "tools" / "consumer.py").write_text(
+        "from shared import shared_tool\n"
+    )
+
+    mcp, counts = build_server(str(workspace))
+
+    assert counts["tool_count"] == 1
+
+
 def test_build_with_resources(workspace, sample_resource, monkeypatch):
     """Resources are registered correctly."""
     monkeypatch.setenv("MCP_SERVER_NAME", "test-server")

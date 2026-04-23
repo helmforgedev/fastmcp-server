@@ -11,6 +11,7 @@ Directory structure expected:
 """
 
 import importlib.util
+import inspect
 import logging
 import os
 import sys
@@ -20,6 +21,101 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 logger = logging.getLogger("fastmcp-server.builder")
+HELPER_MODULE_SUFFIXES = ("_helpers",)
+
+
+def _get_explicit_tool_names(module: types.ModuleType) -> list[str] | None:
+    """Return explicit tool export names when the module declares them."""
+    explicit = getattr(module, "TOOLS", None)
+    if explicit is None:
+        return None
+
+    if isinstance(explicit, (list, tuple, set)):
+        return [str(name) for name in explicit]
+
+    logger.warning(
+        "Ignoring invalid TOOLS declaration in %s; expected list/tuple/set, got %s",
+        module.__name__,
+        type(explicit).__name__,
+    )
+    return None
+
+
+def _is_supported_tool_signature(func: types.FunctionType) -> tuple[bool, str]:
+    """Return whether a function signature is safe to register as an MCP tool."""
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError) as exc:
+        return False, f"signature inspection failed: {exc}"
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            return False, "functions with *args are not supported"
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return False, "functions with **kwargs are not supported"
+
+    return True, ""
+
+
+def _iter_tool_candidates(module: types.ModuleType, py_file: Path):
+    """Yield tool candidates from a module using explicit exports or safe heuristics."""
+    auto_register = getattr(module, "__mcp_auto_register__", True)
+    explicit_names = _get_explicit_tool_names(module)
+    module_stem = py_file.stem.lower()
+
+    if not auto_register and explicit_names is None:
+        logger.info(
+            "Skipping tool auto-registration for %s (__mcp_auto_register__=False)",
+            py_file.name,
+        )
+        return
+
+    if explicit_names is None and (
+        module_stem == "helpers" or module_stem.endswith(HELPER_MODULE_SUFFIXES)
+    ):
+        logger.info(
+            "Skipping helper module %s during tool auto-registration",
+            py_file.name,
+        )
+        return
+
+    names = explicit_names if explicit_names is not None else dir(module)
+    seen: set[str] = set()
+
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+
+        if name.startswith("_"):
+            continue
+
+        obj = getattr(module, name, None)
+        if not (callable(obj) and isinstance(obj, types.FunctionType)):
+            continue
+
+        is_explicit = explicit_names is not None
+
+        if not is_explicit and obj.__module__ != module.__name__:
+            logger.debug(
+                "Skipping imported function %s from %s (defined in %s)",
+                name,
+                py_file.name,
+                obj.__module__,
+            )
+            continue
+
+        supported, reason = _is_supported_tool_signature(obj)
+        if not supported:
+            logger.warning(
+                "Skipping function %s from %s: %s",
+                name,
+                py_file.name,
+                reason,
+            )
+            continue
+
+        yield name, obj
 
 
 def build_server(workspace: str) -> tuple[FastMCP, dict]:
@@ -238,53 +334,49 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
         mod_cache_ttl = getattr(module, "__cache_ttl__", 0)
 
         registered = False
-        for name in dir(module):
-            if name.startswith("_"):
-                continue
-            obj = getattr(module, name)
-            if callable(obj) and isinstance(obj, types.FunctionType):
-                # v1.0.0: Apply sandboxing (memory + output limits)
-                obj = sandbox_tool(obj, name, mod_max_memory_mb, mod_max_output_size_kb)
+        for name, obj in _iter_tool_candidates(module, py_file):
+            # v1.0.0: Apply sandboxing (memory + output limits)
+            obj = sandbox_tool(obj, name, mod_max_memory_mb, mod_max_output_size_kb)
 
-                # v1.0.0: Apply rate limiting
-                obj = rate_limit_tool(obj, name, mod_rate_limit)
+            # v1.0.0: Apply rate limiting
+            obj = rate_limit_tool(obj, name, mod_rate_limit)
 
-                # v1.0.0: Apply caching
-                if mod_cache_ttl > 0:
-                    obj = cache_tool(obj, name, float(mod_cache_ttl))
+            # v1.0.0: Apply caching
+            if mod_cache_ttl > 0:
+                obj = cache_tool(obj, name, float(mod_cache_ttl))
 
-                # Instrument with metrics if enabled
-                if metrics_enabled():
-                    obj = instrument_tool(obj, name)
+            # Instrument with metrics if enabled
+            if metrics_enabled():
+                obj = instrument_tool(obj, name)
 
-                # Build kwargs for mcp.tool()
-                tool_kwargs: dict = {}
-                if mod_tags is not None:
-                    tool_kwargs["tags"] = set(mod_tags)
-                if mod_timeout is not None:
-                    tool_kwargs["timeout"] = float(mod_timeout)
-                if mod_annotations is not None:
-                    tool_kwargs["annotations"] = dict(mod_annotations)
+            # Build kwargs for mcp.tool()
+            tool_kwargs: dict = {}
+            if mod_tags is not None:
+                tool_kwargs["tags"] = set(mod_tags)
+            if mod_timeout is not None:
+                tool_kwargs["timeout"] = float(mod_timeout)
+            if mod_annotations is not None:
+                tool_kwargs["annotations"] = dict(mod_annotations)
 
-                # Store required scopes in annotations (v0.7.0)
-                if mod_scopes is not None:
-                    annotations = tool_kwargs.get("annotations", {})
-                    annotations["requiredScopes"] = list(mod_scopes)
-                    tool_kwargs["annotations"] = annotations
+            # Store required scopes in annotations (v0.7.0)
+            if mod_scopes is not None:
+                annotations = tool_kwargs.get("annotations", {})
+                annotations["requiredScopes"] = list(mod_scopes)
+                tool_kwargs["annotations"] = annotations
 
-                # Mark idempotent hint if cached (v1.0.0)
-                if mod_cache_ttl > 0:
-                    annotations = tool_kwargs.get("annotations", {})
-                    annotations["idempotentHint"] = True
-                    tool_kwargs["annotations"] = annotations
+            # Mark idempotent hint if cached (v1.0.0)
+            if mod_cache_ttl > 0:
+                annotations = tool_kwargs.get("annotations", {})
+                annotations["idempotentHint"] = True
+                tool_kwargs["annotations"] = annotations
 
-                if tool_kwargs:
-                    mcp.tool(obj, **tool_kwargs)
-                else:
-                    mcp.tool(obj)
-                logger.info("Registered tool: %s (from %s)", name, py_file.name)
-                count += 1
-                registered = True
+            if tool_kwargs:
+                mcp.tool(obj, **tool_kwargs)
+            else:
+                mcp.tool(obj)
+            logger.info("Registered tool: %s (from %s)", name, py_file.name)
+            count += 1
+            registered = True
 
         if not registered:
             msg = f"No tools found in {py_file.name}"
