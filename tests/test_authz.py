@@ -187,7 +187,11 @@ def test_destructive_tool_requires_human_approval():
     with pytest.raises(AuthorizationDenied, match="human_approved"):
         validate_tool_policy("run_gh", component, {"args": "repo delete"})
 
-    args = {"args": "pr list", "human_approved": True, "approval_reason": "operator approved"}
+    args = {
+        "args": "pr list",
+        "human_approved": True,
+        "approval_reason": "operator approved",
+    }
     validate_tool_policy("run_gh", component, args)
     assert "human_approved" not in args
     assert "approval_reason" not in args

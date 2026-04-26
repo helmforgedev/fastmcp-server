@@ -84,40 +84,40 @@ async def debug_info(request: Request) -> JSONResponse:
     return JSONResponse(
         redact_secrets(
             {
-            "server": server_name,
-            "version": _get_version(),
-            "fastmcp_version": _get_fastmcp_version(),
-            "uptime_seconds": round(uptime, 1),
-            "components": {
-                "tools": tools,
-                "resources": resources,
-                "prompts": prompts,
-            },
-            "sources": _source_info,
-            "auth": safe_config_summary(),
-            "extra_packages": [
-                p.strip() for p in extra_packages.split(",") if p.strip()
-            ],
-            "cache": _get_cache_stats(),
-            "config": {
-                "mask_error_details": env_flag(
-                    "MCP_MASK_ERROR_DETAILS", default=is_production_env()
-                ),
-                "on_duplicate": os.environ.get("MCP_ON_DUPLICATE_TOOLS", "warn"),
-                "strict_loading": env_flag(
-                    "MCP_STRICT_LOADING", default=is_production_env()
-                ),
-                "metrics_enabled": os.environ.get(
-                    "MCP_METRICS_ENABLED", "false"
-                ).lower()
-                == "true",
-                "ui_enabled": os.environ.get("MCP_UI_ENABLED", "true").lower()
-                == "true",
-                "log_format": os.environ.get("LOG_FORMAT", "text"),
-                "rate_limit_default": os.environ.get("MCP_RATE_LIMIT_DEFAULT", ""),
-                "cache_enabled": os.environ.get("MCP_CACHE_ENABLED", "true").lower()
-                != "false",
-            },
+                "server": server_name,
+                "version": _get_version(),
+                "fastmcp_version": _get_fastmcp_version(),
+                "uptime_seconds": round(uptime, 1),
+                "components": {
+                    "tools": tools,
+                    "resources": resources,
+                    "prompts": prompts,
+                },
+                "sources": _source_info,
+                "auth": safe_config_summary(),
+                "extra_packages": [
+                    p.strip() for p in extra_packages.split(",") if p.strip()
+                ],
+                "cache": _get_cache_stats(),
+                "config": {
+                    "mask_error_details": env_flag(
+                        "MCP_MASK_ERROR_DETAILS", default=is_production_env()
+                    ),
+                    "on_duplicate": os.environ.get("MCP_ON_DUPLICATE_TOOLS", "warn"),
+                    "strict_loading": env_flag(
+                        "MCP_STRICT_LOADING", default=is_production_env()
+                    ),
+                    "metrics_enabled": os.environ.get(
+                        "MCP_METRICS_ENABLED", "false"
+                    ).lower()
+                    == "true",
+                    "ui_enabled": os.environ.get("MCP_UI_ENABLED", "true").lower()
+                    == "true",
+                    "log_format": os.environ.get("LOG_FORMAT", "text"),
+                    "rate_limit_default": os.environ.get("MCP_RATE_LIMIT_DEFAULT", ""),
+                    "cache_enabled": os.environ.get("MCP_CACHE_ENABLED", "true").lower()
+                    != "false",
+                },
             }
         )
     )
@@ -141,17 +141,17 @@ async def api_info(request: Request) -> JSONResponse:
     return JSONResponse(
         redact_secrets(
             {
-            "server": server_name,
-            "version": _get_version(),
-            "fastmcp_version": _get_fastmcp_version(),
-            "uptime_seconds": round(uptime, 1),
-            "auth_type": auth_type,
-            "counts": {
-                "tools": len(tools),
-                "resources": len(resources),
-                "prompts": len(prompts),
-            },
-            "sources": _source_info,
+                "server": server_name,
+                "version": _get_version(),
+                "fastmcp_version": _get_fastmcp_version(),
+                "uptime_seconds": round(uptime, 1),
+                "auth_type": auth_type,
+                "counts": {
+                    "tools": len(tools),
+                    "resources": len(resources),
+                    "prompts": len(prompts),
+                },
+                "sources": _source_info,
             }
         )
     )

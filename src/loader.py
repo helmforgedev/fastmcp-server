@@ -284,8 +284,12 @@ def _merge_into_workspace(
                 if _is_blocked_source_file(asset_rel):
                     logger.warning("Skipped blocked source file: %s", asset_rel)
                     continue
-                if not explicitly_allowed and not _is_allowed_asset_type(asset_dir, rel):
-                    logger.warning("Skipped unsupported %s file: %s", asset_dir, rel_str)
+                if not explicitly_allowed and not _is_allowed_asset_type(
+                    asset_dir, rel
+                ):
+                    logger.warning(
+                        "Skipped unsupported %s file: %s", asset_dir, rel_str
+                    )
                     continue
                 if max_file_size > 0 and item.stat().st_size > max_file_size:
                     logger.warning("Skipped oversized source file: %s", asset_rel)
@@ -312,7 +316,9 @@ def _validate_git_source(repo_url: str, branch: str, subpath: str) -> None:
 
     allowed_repos = _csv_env("SOURCE_GIT_ALLOWED_REPOSITORIES")
     if allowed_repos and not _value_allowed(repo_url, allowed_repos):
-        raise ValueError("SOURCE_GIT_REPOSITORY is not in SOURCE_GIT_ALLOWED_REPOSITORIES.")
+        raise ValueError(
+            "SOURCE_GIT_REPOSITORY is not in SOURCE_GIT_ALLOWED_REPOSITORIES."
+        )
 
     allowed_branches = _csv_env("SOURCE_GIT_ALLOWED_BRANCHES")
     if allowed_branches and not _value_allowed(branch, allowed_branches):
@@ -347,7 +353,7 @@ def _write_git_askpass(directory: Path) -> str:
         script = directory / "git-askpass.cmd"
         script.write_text(
             "@echo off\n"
-            f"\"{sys.executable}\" -c "
+            f'"{sys.executable}" -c '
             "\"import os,sys; p=' '.join(sys.argv[1:]).lower(); "
             "print(os.environ.get('SOURCE_GIT_USERNAME','x-access-token') "
             "if 'username' in p else os.environ.get('SOURCE_GIT_TOKEN',''))\" %*\n",
@@ -422,7 +428,9 @@ def _value_allowed(value: str, allowed: list[str]) -> bool:
 
 
 def _csv_env(name: str) -> list[str]:
-    return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
+    return [
+        item.strip() for item in os.environ.get(name, "").split(",") if item.strip()
+    ]
 
 
 def _env_int(name: str, default: int) -> int:

@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 logger = logging.getLogger("fastmcp-server.authz")
 audit_logger = logging.getLogger("fastmcp-server.audit")
 
+
 class AuthorizationDenied(PermissionError):
     """Raised when a request or tool call does not satisfy server policy."""
 
@@ -286,7 +287,9 @@ def _annotation(component: Any, key: str, default: Any = None) -> Any:
     return getattr(annotations, key, default)
 
 
-def validate_tool_policy(tool_name: str, component: Any, arguments: dict[str, Any]) -> None:
+def validate_tool_policy(
+    tool_name: str, component: Any, arguments: dict[str, Any]
+) -> None:
     """Enforce generic server-side policy before tool execution."""
     destructive = bool(_annotation(component, "destructiveHint", False))
     if destructive and _human_approval_required():

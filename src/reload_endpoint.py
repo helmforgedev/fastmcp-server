@@ -53,7 +53,9 @@ async def reload_endpoint(request: Request) -> JSONResponse:
         from metrics import record_source_sync
 
         record_source_sync("webhook", False)
-        detail = "reload failed" if env_flag("MCP_MASK_ERROR_DETAILS") else redact_secrets(str(e))
-        return JSONResponse(
-            {"status": "error", "detail": detail}, status_code=500
+        detail = (
+            "reload failed"
+            if env_flag("MCP_MASK_ERROR_DETAILS")
+            else redact_secrets(str(e))
         )
+        return JSONResponse({"status": "error", "detail": detail}, status_code=500)

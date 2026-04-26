@@ -87,7 +87,9 @@ def test_merge_blocks_generated_python_cache_artifacts(workspace, tmp_path):
     assert not (workspace / "knowledge" / ".ruff_cache").exists()
 
 
-def test_merge_allows_explicit_sensitive_file_allowlist(workspace, tmp_path, monkeypatch):
+def test_merge_allows_explicit_sensitive_file_allowlist(
+    workspace, tmp_path, monkeypatch
+):
     """Sensitive files require an explicit allowlist pattern."""
     source = tmp_path / "source"
     (source / "knowledge").mkdir(parents=True)

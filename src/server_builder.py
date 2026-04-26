@@ -20,7 +20,13 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from authz import AuthzAuditMiddleware, build_auth_provider, env_flag, is_production_env, tool_auth
+from authz import (
+    AuthzAuditMiddleware,
+    build_auth_provider,
+    env_flag,
+    is_production_env,
+    tool_auth,
+)
 
 logger = logging.getLogger("fastmcp-server.builder")
 HELPER_MODULE_SUFFIXES = ("_helpers",)

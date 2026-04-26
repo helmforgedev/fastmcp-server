@@ -71,7 +71,9 @@ def test_reload_requires_configured_admin_scope(client, monkeypatch):
 
     assert client.post("/reload").status_code == 401
     assert (
-        client.post("/reload", headers={"Authorization": "Bearer secret-token"}).status_code
+        client.post(
+            "/reload", headers={"Authorization": "Bearer secret-token"}
+        ).status_code
         == 401
     )
 
