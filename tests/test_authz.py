@@ -89,7 +89,9 @@ def test_bearer_http_auth_accepts_valid_token_and_scope(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
 
-    allowed, client_id, scopes = asyncio.run(authorize_http_request(make_request("secret-token")))
+    allowed, client_id, scopes = asyncio.run(
+        authorize_http_request(make_request("secret-token"))
+    )
 
     assert allowed is True
     assert client_id == "bearer-user"
@@ -100,7 +102,9 @@ def test_bearer_http_auth_ignores_scopes(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
 
-    allowed, _, scopes = asyncio.run(authorize_http_request(make_request("secret-token")))
+    allowed, _, scopes = asyncio.run(
+        authorize_http_request(make_request("secret-token"))
+    )
 
     assert allowed is True
     assert scopes == []
@@ -124,7 +128,9 @@ def test_jwt_http_auth_accepts_valid_token(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_JWT_PUBLIC_KEY", secret)
     monkeypatch.setenv("MCP_AUTH_JWT_ALGORITHM", "HS256")
 
-    allowed, client_id, scopes = asyncio.run(authorize_http_request(make_request(token)))
+    allowed, client_id, scopes = asyncio.run(
+        authorize_http_request(make_request(token))
+    )
 
     assert allowed is True
     assert client_id == "agent-1"

@@ -154,7 +154,9 @@ def _auth_config_error(message: str) -> None:
     logger.warning("%s; running without auth", message)
 
 
-async def authorize_http_request(request: Request) -> tuple[bool, str | None, list[str]]:
+async def authorize_http_request(
+    request: Request,
+) -> tuple[bool, str | None, list[str]]:
     """Authorize non-MCP HTTP endpoints using the same server auth settings."""
     auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
     if auth_type == "none":
