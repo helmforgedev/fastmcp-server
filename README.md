@@ -459,15 +459,20 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 
 ## Environment Variables
 
+See [.env.example](.env.example) for a copyable full environment template with
+every supported variable, defaults, and placeholder values for secrets.
+
 ### Server
 
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_SERVER_NAME` | `fastmcp-server` | Server display name |
+| `MCP_SERVER_VERSION` | `0.4.0` | Server version returned by diagnostics APIs |
 | `MCP_HOST` | `0.0.0.0` | Listen address |
 | `MCP_PORT` | `8000` | Listen port |
 | `MCP_PATH` | `/mcp` | HTTP endpoint path |
 | `MCP_WORKSPACE` | `/app/workspace` | Workspace directory |
+| `MCP_ENV` / `ENVIRONMENT` / `APP_ENV` | `dev` | Deployment environment; `staging`, `prod`, and `production` enable stricter defaults |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `MCP_MASK_ERROR_DETAILS` | `false`, `true` in production/staging | Hide internal error details from clients |
@@ -485,7 +490,8 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_AUTH_TYPE` | `none` | `bearer`, `jwt`, or `none` |
+| `MCP_AUTH_TYPE` | `none` | `bearer`, `jwt`, `multi`, or `none` |
+| `MCP_ALLOW_NO_AUTH` | `false` | Explicitly allow `MCP_AUTH_TYPE=none` in production-like environments |
 | `MCP_AUTH_TOKEN` | | Bearer token value |
 | `MCP_AUTH_SCOPES` | | Comma-separated scopes granted to the bearer token |
 | `MCP_AUTH_REQUIRED_SCOPES` | | Comma-separated scopes required on every authenticated request |
@@ -512,6 +518,7 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 | `SOURCE_S3_SECRET_KEY` | | Secret access key |
 | `SOURCE_S3_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
 | `SOURCE_S3_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
+| `SOURCE_S3_SYNC_INTERVAL` | `0` | Periodic S3 sync interval in seconds; `0` disables background sync |
 
 ### Git Source
 
@@ -522,10 +529,12 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 | `SOURCE_GIT_BRANCH` | `main` | Branch to clone |
 | `SOURCE_GIT_PATH` | | Subdirectory within the repo |
 | `SOURCE_GIT_TOKEN` | | Auth token for private repos |
+| `SOURCE_GIT_USERNAME` | `x-access-token` | Username used by the temporary Git askpass helper |
 | `SOURCE_GIT_ALLOWED_REPOSITORIES` | | Comma-separated allowlist of repository URL patterns |
 | `SOURCE_GIT_ALLOWED_BRANCHES` | | Comma-separated allowlist of branch patterns |
 | `SOURCE_GIT_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
 | `SOURCE_GIT_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
+| `SOURCE_GIT_SYNC_INTERVAL` | `0` | Periodic Git sync interval in seconds; `0` disables background sync |
 | `SOURCE_BLOCKED_FILE_ALLOWLIST` | | Explicit allowlist for normally blocked source files |
 
 Sensitive files are skipped by default from all sources: `.env`, `*.env`, `*.pem`, `*.key`, `*.p12`, `id_rsa`, and filenames containing `secret`. Tool, resource, and prompt directories accept only Python files by default. Knowledge files are restricted by extension and total size.
@@ -541,6 +550,39 @@ Sensitive files are skipped by default from all sources: `.env`, `*.env`, `*.pem
 | `SOURCE_OCI_PASSWORD` | | Registry password |
 | `SOURCE_OCI_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
 | `SOURCE_OCI_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
+
+### Inline Source
+
+| Variable | Default | Description |
+|---|---|---|
+| `SOURCE_INLINE_DIR` | `/app/inline` | Directory copied into the workspace during startup |
+| `MCP_HOT_RELOAD` | `false` | Watch `SOURCE_INLINE_DIR` for `.py` changes and rebuild components automatically |
+
+### Gateway
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_MODE` | `server` | Set to `gateway` to mount remote MCP servers |
+| `MCP_MOUNT_SERVERS` | | JSON array of `{name, url, namespace}` mount definitions |
+
+### Visibility
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_ENABLE_TAGS` | | Comma-separated allowlist of tags to expose |
+| `MCP_DISABLE_TAGS` | | Comma-separated blocklist of tags to hide |
+| `MCP_VISIBILITY_MODE` | `blocklist` | Visibility strategy: `blocklist` or `allowlist` |
+
+### Rate Limiting, Cache, and Sandbox Limits
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_RATE_LIMIT_DEFAULT` | | Global tool rate limit, for example `100/min` |
+| `MCP_RATE_LIMIT_<TOOL_NAME>` | | Per-tool override using the uppercased tool name, for example `MCP_RATE_LIMIT_DEPLOY=5/min` |
+| `MCP_CACHE_ENABLED` | `true` | Enable tool-result caching for tools configured with cache support |
+| `MCP_CACHE_MAX_SIZE` | `1000` | Maximum cache entries per tool |
+| `MCP_MAX_MEMORY_MB` | `0` | Best-effort memory limit in MB on supported Linux runtimes; `0` disables |
+| `MCP_MAX_OUTPUT_SIZE_KB` | `0` | Maximum tool output size before truncation; `0` disables |
 
 ## Init Container Pattern
 
