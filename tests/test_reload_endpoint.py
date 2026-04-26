@@ -61,3 +61,23 @@ def test_reload_before_init():
     assert resp.status_code == 503
 
     reload_endpoint._sync_fn, reload_endpoint._rebuild_fn = old
+
+
+def test_reload_requires_configured_admin_scope(client, monkeypatch):
+    """Reload endpoint is protected by a configurable admin scope."""
+    monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
+    monkeypatch.setenv("MCP_AUTH_SCOPES", "mcp:read")
+
+    assert client.post("/reload").status_code == 401
+    assert (
+        client.post(
+            "/reload", headers={"Authorization": "Bearer secret-token"}
+        ).status_code
+        == 401
+    )
+
+    monkeypatch.setenv("MCP_AUTH_SCOPES", "mcp:read,mcp:admin")
+    response = client.post("/reload", headers={"Authorization": "Bearer secret-token"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "reloaded"

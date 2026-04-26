@@ -98,8 +98,8 @@ services:
       SOURCE_S3_ENABLED: "true"
       SOURCE_S3_ENDPOINT: http://minio:9000
       SOURCE_S3_BUCKET: mcp-tools
-      SOURCE_S3_ACCESS_KEY: minioadmin
-      SOURCE_S3_SECRET_KEY: minioadmin
+      SOURCE_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      SOURCE_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
 
   minio:
     image: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
@@ -108,8 +108,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
 ```
 
 ## Running with Git Source
@@ -123,7 +123,18 @@ docker run -d \
   docker.io/helmforge/fastmcp-server:0.4.0
 ```
 
-For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
+For private repos, set `SOURCE_GIT_TOKEN` with a personal access token. The token is passed to Git through a temporary askpass helper and is not embedded in the repository URL.
+
+For production, prefer explicit source restrictions:
+
+```bash
+SOURCE_GIT_ALLOWED_REPOSITORIES=https://github.com/myorg/*
+SOURCE_GIT_ALLOWED_BRANCHES=main,release/*
+SOURCE_GIT_PATH=mcp
+MCP_STRICT_LOADING=true
+MCP_MASK_ERROR_DETAILS=true
+MCP_DISABLE_TAGS=admin
+```
 
 ## Writing Tools
 
@@ -291,6 +302,109 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | Bearer | `MCP_AUTH_TYPE=bearer` + `MCP_AUTH_TOKEN` | API keys, service accounts |
 | JWT | `MCP_AUTH_TYPE=jwt` + `MCP_AUTH_JWT_*` | OAuth/OIDC, enterprise SSO |
 
+Authentication is split into three layers:
+
+- MCP client authentication: controls who can connect to this server.
+- Source authentication: controls how the server loads tools/resources/prompts from Git, S3, or OCI.
+- Tool authentication: controls how individual tools call external systems such as GitHub.
+
+`MCP_AUTH_TYPE=none` is intended only for local/dev. If `MCP_ENV` or `ENVIRONMENT` is `staging` or `production`, the server refuses to start with `none` unless `MCP_ALLOW_NO_AUTH=true` is set explicitly.
+
+Tools can declare `__required_scopes__`; the server enforces those scopes and exposes them in tool annotations. Destructive tools marked with `destructiveHint` require `human_approved=true` unless `MCP_REQUIRE_HUMAN_APPROVAL_FOR_DESTRUCTIVE=false`.
+
+## Production Hardening
+
+Recommended baseline for a public remote MCP server:
+
+```bash
+MCP_ENV=production
+MCP_AUTH_TYPE=bearer
+MCP_AUTH_TOKEN=<stored in your secret manager>
+MCP_AUTH_CLIENT_ID=<stable-client-id>
+MCP_AUTH_SCOPES=helmforge:validate,github:pr,mcp:admin
+MCP_RELOAD_REQUIRED_SCOPES=mcp:admin
+MCP_MASK_ERROR_DETAILS=true
+MCP_STRICT_LOADING=true
+MCP_METRICS_ENABLED=true
+LOG_FORMAT=json
+MCP_DISABLE_TAGS=admin
+```
+
+Security model:
+
+- Client auth protects MCP and protected HTTP routes.
+- Tool scopes protect individual tools.
+- Source credentials load content from Git, S3, or OCI and should be separate
+  from client auth.
+- Tool credentials such as `GITHUB_TOKEN` should exist only in the server runtime
+  that intentionally enables those tools.
+
+Secrets:
+
+- Store `MCP_AUTH_TOKEN`, `GITHUB_TOKEN`, `SOURCE_GIT_TOKEN`,
+  `SOURCE_S3_ACCESS_KEY`, `SOURCE_S3_SECRET_KEY`, and `SOURCE_OCI_PASSWORD`
+  outside Git.
+- Do not place secrets in inline content, knowledge files, tool files, examples,
+  or PR comments.
+- Diagnostics and logs redact known secret env values, bearer headers, and
+  token-bearing URLs, but redaction is defense-in-depth rather than permission to
+  log secrets.
+
+Scopes:
+
+- Use read-only scopes for normal agents.
+- Grant write scopes only to workflows that need them.
+- Keep `mcp:admin` limited to operational clients that may call `/reload`.
+- Keep `github:admin` and admin-tagged tools hidden from normal agents.
+
+Deployment notes:
+
+- The image runs as non-root `USER 1000`.
+- The Docker healthcheck calls `/healthz`.
+- `/readyz` should be used for readiness, because it waits for sources and
+  components to load.
+- `/debug/info`, `/api/*`, `/ui`, `/metrics`, and `/reload` are protected by
+  the same auth policy.
+- Set `MCP_CORS_ALLOWED_ORIGINS` only when an external browser UI needs it; keep
+  it empty otherwise.
+- Leave `EXTRA_PIP_PACKAGES` empty in production unless packages are pinned and
+  trusted.
+
+### Hardened Compose Example
+
+```yaml
+services:
+  mcp-server:
+    image: docker.io/helmforge/fastmcp-server:0.4.0
+    ports:
+      - "8000:8000"
+    environment:
+      MCP_ENV: production
+      MCP_SERVER_NAME: helmforge
+      MCP_PATH: /helmforge/mcp
+      MCP_AUTH_TYPE: bearer
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
+      MCP_AUTH_CLIENT_ID: maicon-berlofa
+      MCP_AUTH_SCOPES: helmforge:validate,github:pr,mcp:admin
+      MCP_RELOAD_REQUIRED_SCOPES: mcp:admin
+      MCP_MASK_ERROR_DETAILS: "true"
+      MCP_STRICT_LOADING: "true"
+      MCP_METRICS_ENABLED: "true"
+      LOG_FORMAT: json
+      SOURCE_S3_ENABLED: "true"
+      SOURCE_S3_BUCKET: ${SOURCE_S3_BUCKET}
+      SOURCE_S3_ENDPOINT: ${SOURCE_S3_ENDPOINT}
+      SOURCE_S3_REGION: ${SOURCE_S3_REGION}
+      SOURCE_S3_PREFIX: helmforge
+      SOURCE_S3_ACCESS_KEY: ${SOURCE_S3_ACCESS_KEY}
+      SOURCE_S3_SECRET_KEY: ${SOURCE_S3_SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
 ## Web UI
 
 The embedded dashboard at `/ui` provides:
@@ -356,11 +470,15 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 | `MCP_WORKSPACE` | `/app/workspace` | Workspace directory |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `MCP_MASK_ERROR_DETAILS` | `false` | Hide internal error details from clients |
+| `MCP_MASK_ERROR_DETAILS` | `false`, `true` in production/staging | Hide internal error details from clients |
 | `MCP_ON_DUPLICATE_TOOLS` | `warn` | Duplicate handling: `warn`, `error`, `replace`, `ignore` |
-| `MCP_STRICT_LOADING` | `false` | Fail on boot if any tool/resource has errors |
+| `MCP_STRICT_LOADING` | `false`, `true` in production/staging | Fail on boot if any tool/resource has errors |
 | `MCP_UI_ENABLED` | `true` | Enable built-in Web UI at `/ui` |
 | `MCP_METRICS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
+| `MCP_CORS_ALLOWED_ORIGINS` | | Comma-separated CORS origins for external UI clients |
+| `MCP_MAX_SOURCE_FILE_SIZE_BYTES` | `1048576` | Maximum size for any loaded source file; `0` disables |
+| `MCP_MAX_KNOWLEDGE_BYTES` | `10485760` | Maximum total loaded knowledge size; `0` disables |
+| `MCP_ALLOWED_KNOWLEDGE_EXTENSIONS` | `.md,.txt,.json,.yaml,.yml,.html,.htm,.csv,.xml` | Comma-separated extensions allowed under `knowledge/` |
 | `EXTRA_PIP_PACKAGES` | | Comma-separated pip packages to install at startup |
 
 ### Authentication
@@ -369,9 +487,17 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 |---|---|---|
 | `MCP_AUTH_TYPE` | `none` | `bearer`, `jwt`, or `none` |
 | `MCP_AUTH_TOKEN` | | Bearer token value |
+| `MCP_AUTH_SCOPES` | | Comma-separated scopes granted to the bearer token |
+| `MCP_AUTH_REQUIRED_SCOPES` | | Comma-separated scopes required on every authenticated request |
+| `MCP_AUTH_CLIENT_ID` | `bearer-user` | Client ID used for bearer-token audit logs |
 | `MCP_AUTH_JWT_ISSUER` | | JWT issuer |
 | `MCP_AUTH_JWT_AUDIENCE` | | JWT audience |
 | `MCP_AUTH_JWT_JWKS_URI` | | JWKS endpoint URL |
+| `MCP_AUTH_JWT_PUBLIC_KEY` | | JWT public key or HS* shared secret |
+| `MCP_AUTH_JWT_ALGORITHM` | | JWT algorithm, for example `RS256` or `HS256` |
+| `MCP_AUTH_PROVIDERS` | | Comma-separated providers for `MCP_AUTH_TYPE=multi`, for example `bearer,jwt` |
+| `MCP_REQUIRE_HUMAN_APPROVAL_FOR_DESTRUCTIVE` | `true` | Require `human_approved=true` for destructive tools |
+| `MCP_RELOAD_REQUIRED_SCOPES` | `mcp:admin` | Scopes required for the `/reload` endpoint |
 
 ### S3 Source
 
@@ -384,6 +510,8 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 | `SOURCE_S3_PREFIX` | | Key prefix filter |
 | `SOURCE_S3_ACCESS_KEY` | | Access key ID |
 | `SOURCE_S3_SECRET_KEY` | | Secret access key |
+| `SOURCE_S3_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
+| `SOURCE_S3_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
 
 ### Git Source
 
@@ -394,6 +522,25 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 | `SOURCE_GIT_BRANCH` | `main` | Branch to clone |
 | `SOURCE_GIT_PATH` | | Subdirectory within the repo |
 | `SOURCE_GIT_TOKEN` | | Auth token for private repos |
+| `SOURCE_GIT_ALLOWED_REPOSITORIES` | | Comma-separated allowlist of repository URL patterns |
+| `SOURCE_GIT_ALLOWED_BRANCHES` | | Comma-separated allowlist of branch patterns |
+| `SOURCE_GIT_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
+| `SOURCE_GIT_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
+| `SOURCE_BLOCKED_FILE_ALLOWLIST` | | Explicit allowlist for normally blocked source files |
+
+Sensitive files are skipped by default from all sources: `.env`, `*.env`, `*.pem`, `*.key`, `*.p12`, `id_rsa`, and filenames containing `secret`. Tool, resource, and prompt directories accept only Python files by default. Knowledge files are restricted by extension and total size.
+
+### OCI Source
+
+| Variable | Default | Description |
+|---|---|---|
+| `SOURCE_OCI_ENABLED` | `false` | Enable OCI artifact sync |
+| `SOURCE_OCI_REGISTRY` | | OCI artifact reference without tag |
+| `SOURCE_OCI_TAG` | `latest` | OCI artifact tag |
+| `SOURCE_OCI_USERNAME` | | Registry username |
+| `SOURCE_OCI_PASSWORD` | | Registry password |
+| `SOURCE_OCI_INCLUDE` | | Comma-separated include glob patterns within each asset directory |
+| `SOURCE_OCI_EXCLUDE` | | Comma-separated exclude glob patterns within each asset directory |
 
 ## Init Container Pattern
 
