@@ -1,8 +1,16 @@
 """Tests for the multi-source loader."""
 
 import pytest
+from unittest import mock
 
-from loader import ASSET_DIRS, _merge_into_workspace, _sync_inline, sync_sources
+from loader import (
+    ASSET_DIRS,
+    _merge_into_workspace,
+    _sync_git,
+    _sync_inline,
+    _validate_git_source,
+    sync_sources,
+)
 
 
 def test_sync_inline(workspace, tmp_path):
@@ -47,6 +55,115 @@ def test_merge_into_workspace(workspace, tmp_path):
 
     assert (workspace / "tools" / "a.py").read_text() == "tool a"
     assert (workspace / "knowledge" / "doc.md").read_text() == "# Doc"
+
+
+def test_merge_blocks_sensitive_files_by_default(workspace, tmp_path):
+    """Sensitive-looking files are not copied unless explicitly allowlisted."""
+    source = tmp_path / "source"
+    (source / "knowledge").mkdir(parents=True)
+    (source / "knowledge" / ".env").write_text("TOKEN=secret")
+    (source / "knowledge" / "safe.md").write_text("# Safe")
+
+    _merge_into_workspace(workspace, source)
+
+    assert not (workspace / "knowledge" / ".env").exists()
+    assert (workspace / "knowledge" / "safe.md").exists()
+
+
+def test_merge_blocks_generated_python_cache_artifacts(workspace, tmp_path):
+    """Generated Python caches never enter the runtime workspace."""
+    source = tmp_path / "source"
+    (source / "tools" / "__pycache__").mkdir(parents=True)
+    (source / "resources").mkdir(parents=True)
+    (source / "knowledge").mkdir(parents=True)
+    (source / "tools" / "__pycache__" / "cached.py").write_text("def cached(): pass")
+    (source / "resources" / "resource.cpython-314.pyc").write_bytes(b"cache")
+    (source / "knowledge" / ".ruff_cache").write_text("cache")
+
+    _merge_into_workspace(workspace, source)
+
+    assert not (workspace / "tools" / "__pycache__" / "cached.py").exists()
+    assert not (workspace / "resources" / "resource.cpython-314.pyc").exists()
+    assert not (workspace / "knowledge" / ".ruff_cache").exists()
+
+
+def test_merge_allows_explicit_sensitive_file_allowlist(workspace, tmp_path, monkeypatch):
+    """Sensitive files require an explicit allowlist pattern."""
+    source = tmp_path / "source"
+    (source / "knowledge").mkdir(parents=True)
+    (source / "knowledge" / ".env").write_text("TOKEN=allowed")
+    monkeypatch.setenv("SOURCE_BLOCKED_FILE_ALLOWLIST", "knowledge/.env")
+
+    _merge_into_workspace(workspace, source)
+
+    assert (workspace / "knowledge" / ".env").exists()
+
+
+def test_merge_rejects_unsupported_asset_types(workspace, tmp_path):
+    """Tool/resource/prompt directories only accept Python files."""
+    source = tmp_path / "source"
+    (source / "tools").mkdir(parents=True)
+    (source / "knowledge").mkdir(parents=True)
+    (source / "tools" / "notes.txt").write_text("not python")
+    (source / "knowledge" / "binary.bin").write_text("not allowed")
+
+    _merge_into_workspace(workspace, source)
+
+    assert not (workspace / "tools" / "notes.txt").exists()
+    assert not (workspace / "knowledge" / "binary.bin").exists()
+
+
+def test_merge_enforces_file_size_limit(workspace, tmp_path, monkeypatch):
+    """Oversized source files are skipped before they enter the workspace."""
+    source = tmp_path / "source"
+    (source / "knowledge").mkdir(parents=True)
+    (source / "knowledge" / "large.md").write_text("x" * 20)
+    monkeypatch.setenv("MCP_MAX_SOURCE_FILE_SIZE_BYTES", "10")
+
+    _merge_into_workspace(workspace, source)
+
+    assert not (workspace / "knowledge" / "large.md").exists()
+
+
+def test_git_source_validates_allowlists(monkeypatch):
+    """Git repository and branch can be restricted by configuration."""
+    monkeypatch.setenv("SOURCE_GIT_ALLOWED_REPOSITORIES", "https://github.com/acme/*")
+    monkeypatch.setenv("SOURCE_GIT_ALLOWED_BRANCHES", "main,release/*")
+
+    _validate_git_source("https://github.com/acme/mcp.git", "release/1", "")
+
+    with pytest.raises(ValueError, match="SOURCE_GIT_REPOSITORY"):
+        _validate_git_source("https://github.com/other/mcp.git", "main", "")
+    with pytest.raises(ValueError, match="SOURCE_GIT_BRANCH"):
+        _validate_git_source("https://github.com/acme/mcp.git", "dev", "")
+
+
+def test_git_source_blocks_path_traversal():
+    """SOURCE_GIT_PATH must stay inside the cloned repository."""
+    with pytest.raises(ValueError, match="SOURCE_GIT_PATH"):
+        _validate_git_source("https://github.com/acme/mcp.git", "main", "../secrets")
+
+
+def test_git_clone_uses_askpass_and_scrubs_token(workspace, monkeypatch):
+    """Private Git token is provided through askpass and scrubbed from errors."""
+    monkeypatch.setenv("SOURCE_GIT_REPOSITORY", "https://github.com/acme/mcp.git")
+    monkeypatch.setenv("SOURCE_GIT_BRANCH", "main")
+    monkeypatch.setenv("SOURCE_GIT_TOKEN", "supersecret")
+
+    with mock.patch(
+        "git.Repo.clone_from",
+        side_effect=RuntimeError("fatal: https://x-access-token:supersecret@example"),
+    ) as clone_mock:
+        with pytest.raises(RuntimeError) as exc:
+            _sync_git(workspace)
+
+    assert "supersecret" not in str(exc.value)
+    clone_url = clone_mock.call_args.args[0]
+    clone_env = clone_mock.call_args.kwargs["env"]
+    assert clone_url == "https://github.com/acme/mcp.git"
+    assert "supersecret" not in clone_url
+    assert clone_env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "GIT_ASKPASS" in clone_env
 
 
 def test_sync_sources_empty(workspace, monkeypatch):

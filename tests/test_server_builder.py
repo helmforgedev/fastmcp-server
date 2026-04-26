@@ -1,5 +1,7 @@
 """Tests for the FastMCP server builder."""
 
+import asyncio
+
 from server_builder import build_server
 
 
@@ -155,6 +157,17 @@ def test_build_auth_bearer(workspace, monkeypatch):
 
     # Server should build without error
     assert mcp is not None
+
+
+def test_build_auth_none_blocked_in_production(workspace, monkeypatch):
+    """No auth is only allowed for local/dev unless explicitly overridden."""
+    monkeypatch.setenv("MCP_AUTH_TYPE", "none")
+    monkeypatch.setenv("MCP_ENV", "production")
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="MCP_AUTH_TYPE=none"):
+        build_server(str(workspace))
 
 
 def test_build_auth_none(workspace, monkeypatch):
@@ -465,6 +478,21 @@ def test_multi_auth_bearer_only(workspace, monkeypatch):
     assert mcp is not None
 
 
+def test_multi_auth_uses_all_configured_verifiers(workspace, monkeypatch):
+    """Multi-auth should use FastMCP MultiAuth instead of first provider only."""
+    monkeypatch.setenv("MCP_AUTH_TYPE", "multi")
+    monkeypatch.setenv("MCP_AUTH_PROVIDERS", "bearer,jwt")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("MCP_AUTH_JWT_PUBLIC_KEY", "jwt-secret")
+    monkeypatch.setenv("MCP_AUTH_JWT_ALGORITHM", "HS256")
+
+    mcp, counts = build_server(str(workspace))
+
+    assert mcp is not None
+    assert mcp.auth.__class__.__name__ == "MultiAuth"
+    assert len(mcp.auth.verifiers) == 2
+
+
 def test_required_scopes_stored_in_annotations(workspace, monkeypatch):
     """__required_scopes__ is stored in tool annotations."""
     monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
@@ -475,3 +503,19 @@ def test_required_scopes_stored_in_annotations(workspace, monkeypatch):
 
     mcp, counts = build_server(str(workspace))
     assert counts["tool_count"] == 1
+
+    tool = mcp._local_provider._components["tool:deploy@"]
+    assert getattr(tool.annotations, "requiredScopes") == ["deploy:write"]
+    assert tool.auth is not None
+
+
+def test_call_tool_through_authz_audit_middleware(workspace, sample_tool, monkeypatch):
+    """Registered tools still execute through authz/audit middleware."""
+    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
+    monkeypatch.setenv("MCP_AUTH_TYPE", "none")
+    mcp, counts = build_server(str(workspace))
+
+    result = asyncio.run(mcp.call_tool("greet", {"name": "Ana"}))
+
+    assert counts["tool_count"] == 1
+    assert result.content[0].text == "Hello, Ana!"

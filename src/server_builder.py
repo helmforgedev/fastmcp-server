@@ -20,6 +20,8 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from authz import AuthzAuditMiddleware, build_auth_provider, env_flag, is_production_env, tool_auth
+
 logger = logging.getLogger("fastmcp-server.builder")
 HELPER_MODULE_SUFFIXES = ("_helpers",)
 
@@ -122,10 +124,10 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     """Build and return a configured FastMCP server instance and component counts."""
     ws = Path(workspace)
     server_name = os.environ.get("MCP_SERVER_NAME", "fastmcp-server")
-    strict = os.environ.get("MCP_STRICT_LOADING", "false").lower() == "true"
+    strict = env_flag("MCP_STRICT_LOADING", default=is_production_env())
 
     # Configure authentication
-    auth = _build_auth()
+    auth = build_auth_provider()
 
     # Server-level options
     server_kwargs: dict = {"name": server_name}
@@ -133,7 +135,7 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
         server_kwargs["auth"] = auth
 
     # Error masking (v0.3.0)
-    if os.environ.get("MCP_MASK_ERROR_DETAILS", "false").lower() == "true":
+    if env_flag("MCP_MASK_ERROR_DETAILS", default=is_production_env()):
         server_kwargs["mask_error_details"] = True
 
     # Duplicate handling (v0.3.0)
@@ -142,6 +144,7 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
         server_kwargs["on_duplicate"] = dup_mode
 
     mcp = FastMCP(**server_kwargs)
+    mcp.add_middleware(AuthzAuditMiddleware())
 
     # Load components and track counts
     tool_count = _load_tools(mcp, ws / "tools", strict=strict)
@@ -206,103 +209,6 @@ def rebuild_components(mcp, workspace: str) -> dict:
     return counts
 
 
-def _build_auth():
-    """Build authentication handler from environment variables.
-
-    Supported auth types:
-      - none: No authentication
-      - bearer: Static token via StaticTokenVerifier
-      - jwt: JWT verification via JWTVerifier
-      - multi: Multiple auth providers tried in order
-    """
-    auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
-
-    if auth_type == "bearer":
-        return _build_bearer_auth()
-
-    if auth_type == "jwt":
-        return _build_jwt_auth()
-
-    if auth_type == "multi":
-        return _build_multi_auth()
-
-    if auth_type != "none":
-        logger.warning("Unknown auth type '%s', running without auth", auth_type)
-
-    return None
-
-
-def _build_bearer_auth():
-    """Build bearer token auth."""
-    from fastmcp.server.auth import StaticTokenVerifier
-
-    token = os.environ.get("MCP_AUTH_TOKEN", "")
-    if not token:
-        logger.warning("Bearer auth enabled but MCP_AUTH_TOKEN not set")
-        return None
-    return StaticTokenVerifier(
-        tokens={token: {"client_id": "bearer-user", "sub": "bearer-user", "scopes": []}}
-    )
-
-
-def _build_jwt_auth():
-    """Build JWT auth."""
-    from fastmcp.server.auth import JWTVerifier
-
-    kwargs = {}
-    issuer = os.environ.get("MCP_AUTH_JWT_ISSUER")
-    audience = os.environ.get("MCP_AUTH_JWT_AUDIENCE")
-    jwks_uri = os.environ.get("MCP_AUTH_JWT_JWKS_URI")
-    if issuer:
-        kwargs["issuer"] = issuer
-    if audience:
-        kwargs["audience"] = audience
-    if jwks_uri:
-        kwargs["jwks_uri"] = jwks_uri
-    return JWTVerifier(**kwargs)
-
-
-def _build_multi_auth():
-    """Build multi-auth — try each configured provider in order.
-
-    Uses MCP_AUTH_PROVIDERS to determine which providers to combine.
-    Example: MCP_AUTH_PROVIDERS=bearer,jwt
-    """
-    providers_str = os.environ.get("MCP_AUTH_PROVIDERS", "")
-    if not providers_str:
-        logger.warning("Multi auth enabled but MCP_AUTH_PROVIDERS not set")
-        return None
-
-    providers = [p.strip() for p in providers_str.split(",") if p.strip()]
-    auth_list = []
-
-    for provider in providers:
-        if provider == "bearer":
-            auth = _build_bearer_auth()
-            if auth:
-                auth_list.append(auth)
-        elif provider == "jwt":
-            auth = _build_jwt_auth()
-            if auth:
-                auth_list.append(auth)
-        else:
-            logger.warning("Unknown auth provider in multi-auth: %s", provider)
-
-    if not auth_list:
-        logger.warning("No valid auth providers configured for multi-auth")
-        return None
-
-    if len(auth_list) == 1:
-        return auth_list[0]
-
-    # Use the first provider — FastMCP doesn't have a built-in MultiAuth yet,
-    # so we use the first valid provider. When FastMCP adds MultiAuth, we'll use it.
-    logger.info(
-        "Multi-auth configured with %d providers (using first match)", len(auth_list)
-    )
-    return auth_list[0]
-
-
 def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
     """Load tool functions from Python files in the tools directory."""
     if not tools_dir.is_dir():
@@ -363,6 +269,9 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
                 annotations = tool_kwargs.get("annotations", {})
                 annotations["requiredScopes"] = list(mod_scopes)
                 tool_kwargs["annotations"] = annotations
+                auth_check = tool_auth(mod_scopes)
+                if auth_check:
+                    tool_kwargs["auth"] = auth_check
 
             # Mark idempotent hint if cached (v1.0.0)
             if mod_cache_ttl > 0:
