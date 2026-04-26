@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Iterable
 from typing import Any
 
 from fastmcp.server.middleware import Middleware
@@ -30,13 +29,13 @@ def csv_env(name: str, default: str = "") -> list[str]:
 
 
 def default_scopes() -> list[str]:
-    """Return the server's default MCP scopes."""
-    return csv_env("MCP_AUTH_SCOPES")
+    """Scopes are intentionally ignored by the simplified runtime."""
+    return []
 
 
 def required_global_scopes() -> list[str]:
-    """Return scopes required on every authenticated request."""
-    return csv_env("MCP_AUTH_REQUIRED_SCOPES")
+    """Scopes are intentionally ignored by the simplified runtime."""
+    return []
 
 
 def enforce_no_auth_policy() -> None:
@@ -84,7 +83,7 @@ def build_auth_provider():
         if not verifiers:
             _auth_config_error("Multi auth enabled but no valid providers configured")
             return None
-        return MultiAuth(verifiers=verifiers, required_scopes=required_global_scopes())
+        return MultiAuth(verifiers=verifiers)
 
     _auth_config_error(f"Unknown auth type '{auth_type}'")
     return None
@@ -123,15 +122,13 @@ def _build_bearer_verifier(static_token_verifier_cls):
             token: {
                 "client_id": client_id,
                 "sub": client_id,
-                "scopes": default_scopes(),
             }
-        },
-        required_scopes=required_global_scopes(),
+        }
     )
 
 
 def _build_jwt_verifier(jwt_verifier_cls):
-    kwargs: dict[str, Any] = {"required_scopes": required_global_scopes()}
+    kwargs: dict[str, Any] = {}
     public_key = os.environ.get("MCP_AUTH_JWT_PUBLIC_KEY")
     issuer = os.environ.get("MCP_AUTH_JWT_ISSUER")
     audience = os.environ.get("MCP_AUTH_JWT_AUDIENCE")
@@ -157,20 +154,7 @@ def _auth_config_error(message: str) -> None:
     logger.warning("%s; running without auth", message)
 
 
-def tool_auth(required_scopes: Iterable[str] | None):
-    """Return a FastMCP component auth check for a tool's required scopes."""
-    scopes = [scope for scope in (required_scopes or []) if scope]
-    if not scopes:
-        return None
-
-    from fastmcp.server.auth import require_scopes
-
-    return require_scopes(*scopes)
-
-
-async def authorize_http_request(
-    request: Request, required_scopes: Iterable[str] | None = None
-) -> tuple[bool, str | None, list[str]]:
+async def authorize_http_request(request: Request) -> tuple[bool, str | None, list[str]]:
     """Authorize non-MCP HTTP endpoints using the same server auth settings."""
     auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
     if auth_type == "none":
@@ -185,10 +169,7 @@ async def authorize_http_request(
         expected = os.environ.get("MCP_AUTH_TOKEN", "")
         if not expected or not hmac.compare_digest(token, expected):
             return False, None, []
-        scopes = default_scopes()
-        if not _has_scopes(scopes, required_scopes):
-            return False, os.environ.get("MCP_AUTH_CLIENT_ID", "bearer-user"), scopes
-        return True, os.environ.get("MCP_AUTH_CLIENT_ID", "bearer-user"), scopes
+        return True, os.environ.get("MCP_AUTH_CLIENT_ID", "bearer-user"), []
 
     provider = build_auth_provider()
     if provider is None:
@@ -196,10 +177,7 @@ async def authorize_http_request(
     access_token = await provider.verify_token(token)
     if access_token is None:
         return False, None, []
-    scopes = list(access_token.scopes or [])
-    if not _has_scopes(scopes, required_scopes):
-        return False, access_token.client_id, scopes
-    return True, access_token.client_id, scopes
+    return True, access_token.client_id, []
 
 
 def _bearer_token_from_request(request: Request) -> str:
@@ -210,19 +188,10 @@ def _bearer_token_from_request(request: Request) -> str:
     return token.strip()
 
 
-def _has_scopes(actual: Iterable[str], required: Iterable[str] | None) -> bool:
-    required_set = {scope for scope in (required or []) if scope}
-    if not required_set:
-        return True
-    return required_set.issubset(set(actual))
-
-
 def safe_config_summary() -> dict[str, Any]:
     """Return non-sensitive auth policy for diagnostics."""
     return {
         "type": os.environ.get("MCP_AUTH_TYPE", "none"),
-        "default_scopes": default_scopes(),
-        "required_global_scopes": required_global_scopes(),
         "human_approval_required_for_destructive": _human_approval_required(),
     }
 
@@ -364,7 +333,7 @@ def _audit_branch(arguments: dict[str, Any]) -> str | None:
 class HttpAuthMiddleware(BaseHTTPMiddleware):
     """Protect Starlette HTTP routes mounted outside the MCP transport."""
 
-    def __init__(self, app, protected_prefixes: Iterable[str] | None = None):
+    def __init__(self, app, protected_prefixes=None):
         super().__init__(app)
         self.protected_prefixes = tuple(
             prefix.rstrip("/") or "/" for prefix in (protected_prefixes or [])

@@ -33,14 +33,12 @@ _source_info = {}
 _UNAUTHORIZED = JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
-async def _check_auth(
-    request: Request, required_scopes: list[str] | None = None
-) -> bool:
+async def _check_auth(request: Request) -> bool:
     """Check authentication for API requests.
 
     Returns True when the request is authorized (or auth is disabled).
     """
-    allowed, _, _ = await authorize_http_request(request, required_scopes)
+    allowed, _, _ = await authorize_http_request(request)
     return allowed
 
 
@@ -104,9 +102,6 @@ async def debug_info(request: Request) -> JSONResponse:
                         "MCP_MASK_ERROR_DETAILS", default=is_production_env()
                     ),
                     "on_duplicate": os.environ.get("MCP_ON_DUPLICATE_TOOLS", "warn"),
-                    "strict_loading": env_flag(
-                        "MCP_STRICT_LOADING", default=is_production_env()
-                    ),
                     "metrics_enabled": os.environ.get(
                         "MCP_METRICS_ENABLED", "false"
                     ).lower()

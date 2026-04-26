@@ -25,7 +25,6 @@ from authz import (
     build_auth_provider,
     env_flag,
     is_production_env,
-    tool_auth,
 )
 
 logger = logging.getLogger("fastmcp-server.builder")
@@ -130,7 +129,6 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     """Build and return a configured FastMCP server instance and component counts."""
     ws = Path(workspace)
     server_name = os.environ.get("MCP_SERVER_NAME", "fastmcp-server")
-    strict = env_flag("MCP_STRICT_LOADING", default=is_production_env())
 
     # Configure authentication
     auth = build_auth_provider()
@@ -153,9 +151,9 @@ def build_server(workspace: str) -> tuple[FastMCP, dict]:
     mcp.add_middleware(AuthzAuditMiddleware())
 
     # Load components and track counts
-    tool_count = _load_tools(mcp, ws / "tools", strict=strict)
-    resource_count = _load_resources(mcp, ws / "resources", strict=strict)
-    prompt_count = _load_prompts(mcp, ws / "prompts", strict=strict)
+    tool_count = _load_tools(mcp, ws / "tools")
+    resource_count = _load_resources(mcp, ws / "resources")
+    prompt_count = _load_prompts(mcp, ws / "prompts")
     knowledge_count = _load_knowledge(mcp, ws / "knowledge")
 
     counts = {
@@ -183,7 +181,6 @@ def rebuild_components(mcp, workspace: str) -> dict:
     Clears existing components from the local provider and reloads from workspace.
     """
     ws = Path(workspace)
-    strict = os.environ.get("MCP_STRICT_LOADING", "false").lower() == "true"
 
     # Clear existing components
     try:
@@ -192,9 +189,9 @@ def rebuild_components(mcp, workspace: str) -> dict:
         logger.warning("Could not clear components for rebuild")
 
     # Reload all components
-    tool_count = _load_tools(mcp, ws / "tools", strict=strict)
-    resource_count = _load_resources(mcp, ws / "resources", strict=strict)
-    prompt_count = _load_prompts(mcp, ws / "prompts", strict=strict)
+    tool_count = _load_tools(mcp, ws / "tools")
+    resource_count = _load_resources(mcp, ws / "resources")
+    prompt_count = _load_prompts(mcp, ws / "prompts")
     knowledge_count = _load_knowledge(mcp, ws / "knowledge")
 
     counts = {
@@ -215,7 +212,7 @@ def rebuild_components(mcp, workspace: str) -> dict:
     return counts
 
 
-def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
+def _load_tools(mcp: FastMCP, tools_dir: Path) -> int:
     """Load tool functions from Python files in the tools directory."""
     if not tools_dir.is_dir():
         return 0
@@ -223,33 +220,24 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
     from caching import cache_tool
     from metrics import instrument_tool, is_enabled as metrics_enabled
     from rate_limiter import rate_limit_tool
-    from sandboxing import sandbox_tool
 
     count = 0
     for py_file in sorted(tools_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
-            if strict:
-                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         # Read optional module-level metadata (v0.3.0+)
         mod_tags = getattr(module, "__tags__", None)
         mod_timeout = getattr(module, "__timeout__", None)
         mod_annotations = getattr(module, "__annotations_mcp__", None)
-        mod_scopes = getattr(module, "__required_scopes__", None)
 
-        # v1.0.0: sandboxing, rate limiting, caching
-        mod_max_memory_mb = getattr(module, "__max_memory_mb__", 0)
-        mod_max_output_size_kb = getattr(module, "__max_output_size_kb__", 0)
+        # Optional runtime helpers
         mod_rate_limit = getattr(module, "__rate_limit__", None)
         mod_cache_ttl = getattr(module, "__cache_ttl__", 0)
 
         registered = False
         for name, obj in _iter_tool_candidates(module, py_file):
-            # v1.0.0: Apply sandboxing (memory + output limits)
-            obj = sandbox_tool(obj, name, mod_max_memory_mb, mod_max_output_size_kb)
-
             # v1.0.0: Apply rate limiting
             obj = rate_limit_tool(obj, name, mod_rate_limit)
 
@@ -270,15 +258,6 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
             if mod_annotations is not None:
                 tool_kwargs["annotations"] = dict(mod_annotations)
 
-            # Store required scopes in annotations (v0.7.0)
-            if mod_scopes is not None:
-                annotations = tool_kwargs.get("annotations", {})
-                annotations["requiredScopes"] = list(mod_scopes)
-                tool_kwargs["annotations"] = annotations
-                auth_check = tool_auth(mod_scopes)
-                if auth_check:
-                    tool_kwargs["auth"] = auth_check
-
             # Mark idempotent hint if cached (v1.0.0)
             if mod_cache_ttl > 0:
                 annotations = tool_kwargs.get("annotations", {})
@@ -295,14 +274,12 @@ def _load_tools(mcp: FastMCP, tools_dir: Path, strict: bool = False) -> int:
 
         if not registered:
             msg = f"No tools found in {py_file.name}"
-            if strict:
-                raise RuntimeError(f"Strict loading: {msg}")
             logger.warning(msg)
 
     return count
 
 
-def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> int:
+def _load_resources(mcp: FastMCP, resources_dir: Path) -> int:
     """Load resource functions from Python files in the resources directory."""
     if not resources_dir.is_dir():
         return 0
@@ -311,8 +288,6 @@ def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> 
     for py_file in sorted(resources_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
-            if strict:
-                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         # v0.3.0: Support RESOURCES dict for multiple resources per file
@@ -326,8 +301,6 @@ def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> 
                     count += 1
                 else:
                     msg = f"RESOURCES maps '{uri}' to '{func_name}' but function not found in {py_file.name}"
-                    if strict:
-                        raise RuntimeError(f"Strict loading: {msg}")
                     logger.warning(msg)
             continue
 
@@ -335,8 +308,6 @@ def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> 
         resource_uri = getattr(module, "RESOURCE_URI", None)
         if not resource_uri:
             msg = f"No RESOURCE_URI or RESOURCES in {py_file.name}, skipping"
-            if strict:
-                raise RuntimeError(f"Strict loading: {msg}")
             logger.warning(msg)
             continue
 
@@ -357,7 +328,7 @@ def _load_resources(mcp: FastMCP, resources_dir: Path, strict: bool = False) -> 
     return count
 
 
-def _load_prompts(mcp: FastMCP, prompts_dir: Path, strict: bool = False) -> int:
+def _load_prompts(mcp: FastMCP, prompts_dir: Path) -> int:
     """Load prompt functions from Python files in the prompts directory."""
     if not prompts_dir.is_dir():
         return 0
@@ -366,8 +337,6 @@ def _load_prompts(mcp: FastMCP, prompts_dir: Path, strict: bool = False) -> int:
     for py_file in sorted(prompts_dir.glob("*.py")):
         module = _import_module(py_file)
         if module is None:
-            if strict:
-                raise RuntimeError(f"Strict loading: failed to import {py_file.name}")
             continue
 
         for name in dir(module):

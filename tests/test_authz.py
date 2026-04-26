@@ -88,27 +88,22 @@ def test_multi_auth_without_valid_provider_is_blocked_in_production(monkeypatch)
 def test_bearer_http_auth_accepts_valid_token_and_scope(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
-    monkeypatch.setenv("MCP_AUTH_SCOPES", "github:read")
 
-    allowed, client_id, scopes = asyncio.run(
-        authorize_http_request(make_request("secret-token"), ["github:read"])
-    )
+    allowed, client_id, scopes = asyncio.run(authorize_http_request(make_request("secret-token")))
 
     assert allowed is True
     assert client_id == "bearer-user"
-    assert "github:read" in scopes
+    assert scopes == []
 
 
-def test_bearer_http_auth_rejects_missing_scope(monkeypatch):
+def test_bearer_http_auth_ignores_scopes(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
-    monkeypatch.setenv("MCP_AUTH_SCOPES", "github:read")
 
-    allowed, _, _ = asyncio.run(
-        authorize_http_request(make_request("secret-token"), ["helmforge:admin"])
-    )
+    allowed, _, scopes = asyncio.run(authorize_http_request(make_request("secret-token")))
 
-    assert allowed is False
+    assert allowed is True
+    assert scopes == []
 
 
 def test_jwt_http_auth_accepts_valid_token(monkeypatch):
@@ -129,13 +124,11 @@ def test_jwt_http_auth_accepts_valid_token(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_JWT_PUBLIC_KEY", secret)
     monkeypatch.setenv("MCP_AUTH_JWT_ALGORITHM", "HS256")
 
-    allowed, client_id, scopes = asyncio.run(
-        authorize_http_request(make_request(token), ["github:read"])
-    )
+    allowed, client_id, scopes = asyncio.run(authorize_http_request(make_request(token)))
 
     assert allowed is True
     assert client_id == "agent-1"
-    assert "github:read" in scopes
+    assert scopes == []
 
 
 def test_multi_auth_builds_real_multi_provider(monkeypatch):
@@ -166,10 +159,7 @@ def test_redact_secrets_removes_tokens_from_strings(monkeypatch):
 
 
 def test_runtime_does_not_apply_project_specific_github_policy():
-    component = FakeComponent(
-        tags={"github", "write"},
-        annotations={"requiredScopes": ["github:write"]},
-    )
+    component = FakeComponent(tags={"github", "write"})
 
     validate_tool_policy(
         "github_commit_files",
@@ -181,7 +171,7 @@ def test_runtime_does_not_apply_project_specific_github_policy():
 def test_destructive_tool_requires_human_approval():
     component = FakeComponent(
         tags={"admin"},
-        annotations={"destructiveHint": True, "requiredScopes": ["helmforge:admin"]},
+        annotations={"destructiveHint": True},
     )
 
     with pytest.raises(AuthorizationDenied, match="human_approved"):
@@ -215,10 +205,9 @@ def test_http_auth_middleware_protects_ui_like_routes(monkeypatch):
     assert response.text == "ok"
 
 
-def test_production_defaults_enable_strict_and_masking(monkeypatch):
-    """Production-like environments default hardening flags to true."""
+def test_production_defaults_enable_error_masking(monkeypatch):
+    """Production-like environments still enable error masking by default."""
     monkeypatch.setenv("MCP_ENV", "production")
 
     assert is_production_env()
-    assert env_flag("MCP_STRICT_LOADING", default=is_production_env())
     assert env_flag("MCP_MASK_ERROR_DETAILS", default=is_production_env())

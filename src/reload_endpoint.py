@@ -9,7 +9,7 @@ import logging
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from authz import authorize_http_request, csv_env, env_flag, redact_secrets
+from authz import authorize_http_request, env_flag, redact_secrets
 
 logger = logging.getLogger("fastmcp-server.reload")
 
@@ -30,8 +30,7 @@ def init_reload(mcp, workspace: str, sync_fn, rebuild_fn) -> None:
 
 async def reload_endpoint(request: Request) -> JSONResponse:
     """Force re-sync of all sources and reload components."""
-    required_scopes = csv_env("MCP_RELOAD_REQUIRED_SCOPES", "mcp:admin")
-    allowed, _, _ = await authorize_http_request(request, required_scopes)
+    allowed, _, _ = await authorize_http_request(request)
     if not allowed:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
