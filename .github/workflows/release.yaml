@@ -47,7 +47,7 @@ jobs:
               break
             elif echo "$msg" | grep -qE "^feat(\(.+\))?:"; then
               [ "$BUMP" != "major" ] && BUMP="minor"
-            elif echo "$msg" | grep -qE "^fix(\(.+\))?:|^perf(\(.+\))?:"; then
+            elif echo "$msg" | grep -qE "^fix(\(.+\))?:|^perf(\(.+\))?:|^refactor(\(.+\))?:"; then
               [ "$BUMP" = "none" ] && BUMP="patch"
             fi
           done <<< "$COMMITS"
