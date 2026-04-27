@@ -474,4 +474,4 @@ When running locally with Docker, use `http://localhost:8000/mcp` as the URL and
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).
