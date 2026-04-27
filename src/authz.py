@@ -242,6 +242,7 @@ def redact_secrets(value: Any) -> Any:
 def _known_secret_values() -> list[str]:
     names = [
         "MCP_AUTH_TOKEN",
+        "MCP_ADMIN_TOKEN",
         "SOURCE_GIT_TOKEN",
         "SOURCE_S3_ACCESS_KEY",
         "SOURCE_S3_SECRET_KEY",

@@ -153,13 +153,16 @@ def test_multi_auth_builds_real_multi_provider(monkeypatch):
 
 def test_redact_secrets_removes_tokens_from_strings(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
+    monkeypatch.setenv("MCP_ADMIN_TOKEN", "admin-token")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
 
     value = redact_secrets(
-        "Authorization: Bearer secret-token url=https://x-access-token:ghp_secret@example.com/repo.git"
+        "Authorization: Bearer secret-token admin=admin-token "
+        "url=https://x-access-token:ghp_secret@example.com/repo.git"
     )
 
     assert "secret-token" not in value
+    assert "admin-token" not in value
     assert "ghp_secret" not in value
     assert "[REDACTED]" in value
 
