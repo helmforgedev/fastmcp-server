@@ -182,6 +182,20 @@ async def authorize_http_request(
     return True, access_token.client_id, []
 
 
+async def authorize_admin_http_request(
+    request: Request,
+) -> tuple[bool, str | None, list[str]]:
+    """Authorize privileged HTTP endpoints such as /reload."""
+    admin_token = os.environ.get("MCP_ADMIN_TOKEN", "")
+    if admin_token:
+        token = _bearer_token_from_request(request)
+        if not token or not hmac.compare_digest(token, admin_token):
+            return False, None, []
+        return True, os.environ.get("MCP_ADMIN_CLIENT_ID", "admin-user"), ["admin"]
+
+    return await authorize_http_request(request)
+
+
 def _bearer_token_from_request(request: Request) -> str:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")

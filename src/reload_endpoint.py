@@ -1,7 +1,7 @@
 """Webhook endpoint for triggering source re-sync.
 
 POST /reload — forces re-sync of all sources and component reload.
-Protected by the same auth as the MCP server.
+Protected by admin HTTP auth when MCP_ADMIN_TOKEN is configured.
 """
 
 import logging
@@ -9,7 +9,7 @@ import logging
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from authz import authorize_http_request, env_flag, redact_secrets
+from authz import authorize_admin_http_request, env_flag, redact_secrets
 
 logger = logging.getLogger("fastmcp-server.reload")
 
@@ -30,7 +30,7 @@ def init_reload(mcp, workspace: str, sync_fn, rebuild_fn) -> None:
 
 async def reload_endpoint(request: Request) -> JSONResponse:
     """Force re-sync of all sources and reload components."""
-    allowed, _, _ = await authorize_http_request(request)
+    allowed, _, _ = await authorize_admin_http_request(request)
     if not allowed:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 

@@ -63,12 +63,34 @@ def test_reload_before_init():
     reload_endpoint._sync_fn, reload_endpoint._rebuild_fn = old
 
 
-def test_reload_requires_valid_token_only(client, monkeypatch):
-    """Reload endpoint uses token auth without scope checks."""
+def test_reload_uses_server_token_when_admin_token_is_not_configured(
+    client, monkeypatch
+):
+    """Reload endpoint stays compatible when no admin token is configured."""
     monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
     monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
+    monkeypatch.delenv("MCP_ADMIN_TOKEN", raising=False)
 
     assert client.post("/reload").status_code == 401
     response = client.post("/reload", headers={"Authorization": "Bearer secret-token"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "reloaded"
+
+
+def test_reload_requires_admin_token_when_configured(client, monkeypatch):
+    """Reload endpoint requires the privileged admin token when configured."""
+    monkeypatch.setenv("MCP_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "agent-token")
+    monkeypatch.setenv("MCP_ADMIN_TOKEN", "admin-token")
+
+    assert client.post("/reload").status_code == 401
+    assert (
+        client.post(
+            "/reload", headers={"Authorization": "Bearer agent-token"}
+        ).status_code
+        == 401
+    )
+
+    response = client.post("/reload", headers={"Authorization": "Bearer admin-token"})
     assert response.status_code == 200
     assert response.json()["status"] == "reloaded"
