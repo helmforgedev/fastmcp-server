@@ -16,7 +16,7 @@ LABEL org.opencontainers.image.title="fastmcp-server" \
       org.opencontainers.image.vendor="HelmForge" \
       org.opencontainers.image.url="https://github.com/helmforgedev/fastmcp-server" \
       org.opencontainers.image.source="https://github.com/helmforgedev/fastmcp-server" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # Install only runtime dependency (git for git-source sync)
 RUN apt-get update && \
