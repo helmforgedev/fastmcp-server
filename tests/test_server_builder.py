@@ -420,24 +420,8 @@ def test_duplicate_tools_error(workspace, monkeypatch):
         build_server(str(workspace))
 
 
-# --- v0.4.0: Strict loading tests ---
-
-
-def test_strict_loading_bad_file(workspace, monkeypatch):
-    """Strict loading fails on bad Python file."""
-    monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
-    monkeypatch.setenv("MCP_STRICT_LOADING", "true")
-
-    (workspace / "tools" / "bad.py").write_text("this is not valid python !!!")
-
-    import pytest
-
-    with pytest.raises(RuntimeError, match="Strict loading"):
-        build_server(str(workspace))
-
-
-def test_strict_loading_off_by_default(workspace, monkeypatch):
-    """Strict loading is off by default — bad files are skipped."""
+def test_bad_files_are_always_skipped(workspace, monkeypatch):
+    """Bad files are skipped so one broken component does not stop startup."""
     monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
 
     (workspace / "tools" / "bad.py").write_text("this is not valid python !!!")
@@ -450,19 +434,17 @@ def test_strict_loading_off_by_default(workspace, monkeypatch):
     assert counts["tool_count"] == 1
 
 
-def test_strict_loading_resource_without_uri(workspace, monkeypatch):
-    """Strict loading fails on resource without RESOURCE_URI or RESOURCES."""
+def test_resource_without_uri_is_always_skipped(workspace, monkeypatch):
+    """Resource files without RESOURCE_URI/RESOURCES are skipped."""
     monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
-    monkeypatch.setenv("MCP_STRICT_LOADING", "true")
 
     (workspace / "resources" / "no_uri.py").write_text(
         "def get_data() -> dict:\n    return {'key': 'value'}\n"
     )
 
-    import pytest
+    mcp, counts = build_server(str(workspace))
 
-    with pytest.raises(RuntimeError, match="Strict loading"):
-        build_server(str(workspace))
+    assert counts["resource_count"] == 0
 
 
 # --- v0.7.0: Auth and scopes tests ---
@@ -493,8 +475,8 @@ def test_multi_auth_uses_all_configured_verifiers(workspace, monkeypatch):
     assert len(mcp.auth.verifiers) == 2
 
 
-def test_required_scopes_stored_in_annotations(workspace, monkeypatch):
-    """__required_scopes__ is stored in tool annotations."""
+def test_required_scopes_are_ignored_by_simplified_runtime(workspace, monkeypatch):
+    """__required_scopes__ is ignored; auth is token-level only."""
     monkeypatch.setenv("MCP_SERVER_NAME", "test-server")
     (workspace / "tools" / "admin.py").write_text(
         '__required_scopes__ = ["deploy:write"]\n\n'
@@ -505,8 +487,8 @@ def test_required_scopes_stored_in_annotations(workspace, monkeypatch):
     assert counts["tool_count"] == 1
 
     tool = mcp._local_provider._components["tool:deploy@"]
-    assert getattr(tool.annotations, "requiredScopes") == ["deploy:write"]
-    assert tool.auth is not None
+    assert not getattr(tool.annotations, "requiredScopes", None)
+    assert tool.auth is None
 
 
 def test_call_tool_through_authz_audit_middleware(workspace, sample_tool, monkeypatch):

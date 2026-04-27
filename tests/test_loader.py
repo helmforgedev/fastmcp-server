@@ -87,20 +87,6 @@ def test_merge_blocks_generated_python_cache_artifacts(workspace, tmp_path):
     assert not (workspace / "knowledge" / ".ruff_cache").exists()
 
 
-def test_merge_allows_explicit_sensitive_file_allowlist(
-    workspace, tmp_path, monkeypatch
-):
-    """Sensitive files require an explicit allowlist pattern."""
-    source = tmp_path / "source"
-    (source / "knowledge").mkdir(parents=True)
-    (source / "knowledge" / ".env").write_text("TOKEN=allowed")
-    monkeypatch.setenv("SOURCE_BLOCKED_FILE_ALLOWLIST", "knowledge/.env")
-
-    _merge_into_workspace(workspace, source)
-
-    assert (workspace / "knowledge" / ".env").exists()
-
-
 def test_merge_rejects_unsupported_asset_types(workspace, tmp_path):
     """Tool/resource/prompt directories only accept Python files."""
     source = tmp_path / "source"
@@ -127,17 +113,9 @@ def test_merge_enforces_file_size_limit(workspace, tmp_path, monkeypatch):
     assert not (workspace / "knowledge" / "large.md").exists()
 
 
-def test_git_source_validates_allowlists(monkeypatch):
-    """Git repository and branch can be restricted by configuration."""
-    monkeypatch.setenv("SOURCE_GIT_ALLOWED_REPOSITORIES", "https://github.com/acme/*")
-    monkeypatch.setenv("SOURCE_GIT_ALLOWED_BRANCHES", "main,release/*")
-
-    _validate_git_source("https://github.com/acme/mcp.git", "release/1", "")
-
-    with pytest.raises(ValueError, match="SOURCE_GIT_REPOSITORY"):
-        _validate_git_source("https://github.com/other/mcp.git", "main", "")
-    with pytest.raises(ValueError, match="SOURCE_GIT_BRANCH"):
-        _validate_git_source("https://github.com/acme/mcp.git", "dev", "")
+def test_git_source_does_not_enforce_repo_or_branch_allowlists():
+    """The simplified runtime only validates URL scheme and safe subpath."""
+    _validate_git_source("https://github.com/other/mcp.git", "dev", "")
 
 
 def test_git_source_blocks_path_traversal():

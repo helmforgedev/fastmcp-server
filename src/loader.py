@@ -134,10 +134,7 @@ def _sync_git(workspace: Path) -> None:
     logger.info("Git clone complete: %s", repo.head.commit.hexsha[:8])
 
     source_root = _resolve_source_subpath(clone_dir, subpath)
-
-    include = os.environ.get("SOURCE_GIT_INCLUDE", "")
-    exclude = os.environ.get("SOURCE_GIT_EXCLUDE", "")
-    _merge_into_workspace(workspace, source_root, include=include, exclude=exclude)
+    _merge_into_workspace(workspace, source_root)
 
 
 def _sync_s3(workspace: Path) -> None:
@@ -192,10 +189,7 @@ def _sync_s3(workspace: Path) -> None:
             count += 1
 
     logger.info("Downloaded %d file(s) from S3", count)
-
-    include = os.environ.get("SOURCE_S3_INCLUDE", "")
-    exclude = os.environ.get("SOURCE_S3_EXCLUDE", "")
-    _merge_into_workspace(workspace, s3_dir, include=include, exclude=exclude)
+    _merge_into_workspace(workspace, s3_dir)
 
 
 def _sync_oci(workspace: Path) -> None:
@@ -231,10 +225,7 @@ def _sync_oci(workspace: Path) -> None:
         return
 
     logger.info("OCI pull complete")
-
-    include = os.environ.get("SOURCE_OCI_INCLUDE", "")
-    exclude = os.environ.get("SOURCE_OCI_EXCLUDE", "")
-    _merge_into_workspace(workspace, oci_dir, include=include, exclude=exclude)
+    _merge_into_workspace(workspace, oci_dir)
 
 
 def _sync_inline(workspace: Path, inline_dir: Path) -> None:
@@ -243,12 +234,7 @@ def _sync_inline(workspace: Path, inline_dir: Path) -> None:
     _merge_into_workspace(workspace, inline_dir)
 
 
-def _merge_into_workspace(
-    workspace: Path,
-    source: Path,
-    include: str = "",
-    exclude: str = "",
-) -> None:
+def _merge_into_workspace(workspace: Path, source: Path) -> None:
     """Merge source directory into workspace, overwriting existing files.
 
     Expected source structure:
@@ -257,9 +243,6 @@ def _merge_into_workspace(
       source/prompts/*.py
       source/knowledge/*
 
-    Args:
-        include: Glob pattern for files to include (empty = all)
-        exclude: Glob pattern for files to exclude (empty = none)
     """
     max_file_size = _env_int("MCP_MAX_SOURCE_FILE_SIZE_BYTES", 1_048_576)
     max_knowledge_size = _env_int("MCP_MAX_KNOWLEDGE_BYTES", 10_485_760)
@@ -275,18 +258,10 @@ def _merge_into_workspace(
                 rel_str = str(rel)
                 asset_rel = f"{asset_dir}/{rel_str}".replace("\\", "/")
 
-                # Apply include/exclude filters
-                if include and not _matches_any(rel_str, include):
-                    continue
-                if exclude and _matches_any(rel_str, exclude):
-                    continue
-                explicitly_allowed = _is_explicitly_allowlisted_source_file(asset_rel)
                 if _is_blocked_source_file(asset_rel):
                     logger.warning("Skipped blocked source file: %s", asset_rel)
                     continue
-                if not explicitly_allowed and not _is_allowed_asset_type(
-                    asset_dir, rel
-                ):
+                if not _is_allowed_asset_type(asset_dir, rel):
                     logger.warning(
                         "Skipped unsupported %s file: %s", asset_dir, rel_str
                     )
@@ -308,21 +283,11 @@ def _merge_into_workspace(
                 logger.debug("Merged: %s -> %s", rel, asset_dir)
 
 
-def _validate_git_source(repo_url: str, branch: str, subpath: str) -> None:
+def _validate_git_source(repo_url: str, _branch: str, subpath: str) -> None:
     """Validate Git source settings before clone."""
     parsed = urlparse(repo_url)
     if parsed.scheme not in {"https", "http", "ssh", "git"}:
         raise ValueError("SOURCE_GIT_REPOSITORY must use https, http, ssh, or git.")
-
-    allowed_repos = _csv_env("SOURCE_GIT_ALLOWED_REPOSITORIES")
-    if allowed_repos and not _value_allowed(repo_url, allowed_repos):
-        raise ValueError(
-            "SOURCE_GIT_REPOSITORY is not in SOURCE_GIT_ALLOWED_REPOSITORIES."
-        )
-
-    allowed_branches = _csv_env("SOURCE_GIT_ALLOWED_BRANCHES")
-    if allowed_branches and not _value_allowed(branch, allowed_branches):
-        raise ValueError("SOURCE_GIT_BRANCH is not in SOURCE_GIT_ALLOWED_BRANCHES.")
 
     _validate_relative_path(subpath, "SOURCE_GIT_PATH")
 
@@ -377,11 +342,9 @@ def _write_git_askpass(directory: Path) -> str:
 
 
 def _is_blocked_source_file(asset_rel: str) -> bool:
-    """Return True when a source file is sensitive and not explicitly allowed."""
+    """Return True when a source file is sensitive."""
     normalized = asset_rel.replace("\\", "/")
     lower = normalized.lower()
-    if _is_explicitly_allowlisted_source_file(normalized):
-        return False
 
     parts = Path(lower).parts
     name = Path(lower).name
@@ -395,13 +358,6 @@ def _is_blocked_source_file(asset_rel: str) -> bool:
     return False
 
 
-def _is_explicitly_allowlisted_source_file(asset_rel: str) -> bool:
-    normalized = asset_rel.replace("\\", "/")
-    lower = normalized.lower()
-    allowlist = _csv_env("SOURCE_BLOCKED_FILE_ALLOWLIST")
-    return _value_allowed(normalized, allowlist) or _value_allowed(lower, allowlist)
-
-
 def _is_allowed_asset_type(asset_dir: str, rel: Path) -> bool:
     if asset_dir in PYTHON_ASSET_DIRS:
         return rel.suffix == ".py"
@@ -412,19 +368,6 @@ def _is_allowed_asset_type(asset_dir: str, rel: Path) -> bool:
         extensions = {ext if ext.startswith(".") else f".{ext}" for ext in extensions}
         return rel.suffix.lower() in extensions
     return True
-
-
-def _matches_any(value: str, patterns: str) -> bool:
-    normalized = value.replace("\\", "/")
-    return any(
-        fnmatch.fnmatch(normalized, pattern.strip())
-        for pattern in patterns.split(",")
-        if pattern.strip()
-    )
-
-
-def _value_allowed(value: str, allowed: list[str]) -> bool:
-    return any(fnmatch.fnmatch(value, item) for item in allowed)
 
 
 def _csv_env(name: str) -> list[str]:

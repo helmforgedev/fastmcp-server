@@ -1,14 +1,13 @@
-"""Example: Tool-level auth scopes.
+"""Example: Tool metadata.
 
-The __required_scopes__ variable declares which JWT scopes
-are needed to execute this tool. The scopes are stored in
-the tool's annotations for middleware enforcement.
+The simplified runtime ignores tool-level scopes. Use annotations for client
+hints, and put operational guardrails inside the tool implementation.
 """
 
-__required_scopes__ = ["deploy:write", "admin"]
 __tags__ = {"admin", "devops"}
+__annotations_mcp__ = {"destructiveHint": True, "title": "Deploy Service"}
 
 
 def deploy(service: str, version: str) -> str:
-    """Deploy a service to production. Requires deploy:write scope."""
+    """Deploy a service to production."""
     return f"Deployed {service}@{version}"
