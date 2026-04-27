@@ -15,14 +15,6 @@ import time
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from authz import (
-    authorize_http_request,
-    env_flag,
-    is_production_env,
-    redact_secrets,
-    safe_config_summary,
-)
-
 logger = logging.getLogger("fastmcp-server.api")
 
 # Reference to FastMCP instance (set by entrypoint)
@@ -33,13 +25,20 @@ _source_info = {}
 _UNAUTHORIZED = JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
-async def _check_auth(request: Request) -> bool:
+def _check_auth(request: Request) -> bool:
     """Check authentication for API requests.
 
     Returns True when the request is authorized (or auth is disabled).
     """
-    allowed, _, _ = await authorize_http_request(request)
-    return allowed
+    auth_type = os.environ.get("MCP_AUTH_TYPE", "none").lower()
+    if auth_type == "none":
+        return True
+    if auth_type == "bearer":
+        token = os.environ.get("MCP_AUTH_TOKEN", "")
+        header = request.headers.get("authorization", "")
+        return header == f"Bearer {token}"
+    # JWT and other types: delegate to MCP endpoint only
+    return True
 
 
 def init_api(mcp, source_info: dict | None = None) -> None:
@@ -65,13 +64,14 @@ def _get_fastmcp_version() -> str:
 
 async def debug_info(request: Request) -> JSONResponse:
     """Diagnostic endpoint with full server information."""
-    if not await _check_auth(request):
+    if not _check_auth(request):
         return _UNAUTHORIZED
     if _mcp is None:
         return JSONResponse({"error": "server not initialized"}, status_code=503)
 
     server_name = os.environ.get("MCP_SERVER_NAME", "fastmcp-server")
     uptime = time.time() - _started_at if _started_at else 0
+    auth_type = os.environ.get("MCP_AUTH_TYPE", "none")
     extra_packages = os.environ.get("EXTRA_PIP_PACKAGES", "")
 
     # Extract component info from FastMCP
@@ -80,47 +80,48 @@ async def debug_info(request: Request) -> JSONResponse:
     prompts = _extract_prompts()
 
     return JSONResponse(
-        redact_secrets(
-            {
-                "server": server_name,
-                "version": _get_version(),
-                "fastmcp_version": _get_fastmcp_version(),
-                "uptime_seconds": round(uptime, 1),
-                "components": {
-                    "tools": tools,
-                    "resources": resources,
-                    "prompts": prompts,
-                },
-                "sources": _source_info,
-                "auth": safe_config_summary(),
-                "extra_packages": [
-                    p.strip() for p in extra_packages.split(",") if p.strip()
-                ],
-                "cache": _get_cache_stats(),
-                "config": {
-                    "mask_error_details": env_flag(
-                        "MCP_MASK_ERROR_DETAILS", default=is_production_env()
-                    ),
-                    "on_duplicate": os.environ.get("MCP_ON_DUPLICATE_TOOLS", "warn"),
-                    "metrics_enabled": os.environ.get(
-                        "MCP_METRICS_ENABLED", "false"
-                    ).lower()
-                    == "true",
-                    "ui_enabled": os.environ.get("MCP_UI_ENABLED", "true").lower()
-                    == "true",
-                    "log_format": os.environ.get("LOG_FORMAT", "text"),
-                    "rate_limit_default": os.environ.get("MCP_RATE_LIMIT_DEFAULT", ""),
-                    "cache_enabled": os.environ.get("MCP_CACHE_ENABLED", "true").lower()
-                    != "false",
-                },
-            }
-        )
+        {
+            "server": server_name,
+            "version": _get_version(),
+            "fastmcp_version": _get_fastmcp_version(),
+            "uptime_seconds": round(uptime, 1),
+            "components": {
+                "tools": tools,
+                "resources": resources,
+                "prompts": prompts,
+            },
+            "sources": _source_info,
+            "auth": {"type": auth_type},
+            "extra_packages": [
+                p.strip() for p in extra_packages.split(",") if p.strip()
+            ],
+            "cache": _get_cache_stats(),
+            "config": {
+                "mask_error_details": os.environ.get(
+                    "MCP_MASK_ERROR_DETAILS", "false"
+                ).lower()
+                == "true",
+                "on_duplicate": os.environ.get("MCP_ON_DUPLICATE_TOOLS", "warn"),
+                "strict_loading": os.environ.get("MCP_STRICT_LOADING", "false").lower()
+                == "true",
+                "metrics_enabled": os.environ.get(
+                    "MCP_METRICS_ENABLED", "false"
+                ).lower()
+                == "true",
+                "ui_enabled": os.environ.get("MCP_UI_ENABLED", "true").lower()
+                == "true",
+                "log_format": os.environ.get("LOG_FORMAT", "text"),
+                "rate_limit_default": os.environ.get("MCP_RATE_LIMIT_DEFAULT", ""),
+                "cache_enabled": os.environ.get("MCP_CACHE_ENABLED", "true").lower()
+                != "false",
+            },
+        }
     )
 
 
 async def api_info(request: Request) -> JSONResponse:
     """Server overview for UI dashboard."""
-    if not await _check_auth(request):
+    if not _check_auth(request):
         return _UNAUTHORIZED
     if _mcp is None:
         return JSONResponse({"error": "server not initialized"}, status_code=503)
@@ -134,41 +135,39 @@ async def api_info(request: Request) -> JSONResponse:
     prompts = _extract_prompts()
 
     return JSONResponse(
-        redact_secrets(
-            {
-                "server": server_name,
-                "version": _get_version(),
-                "fastmcp_version": _get_fastmcp_version(),
-                "uptime_seconds": round(uptime, 1),
-                "auth_type": auth_type,
-                "counts": {
-                    "tools": len(tools),
-                    "resources": len(resources),
-                    "prompts": len(prompts),
-                },
-                "sources": _source_info,
-            }
-        )
+        {
+            "server": server_name,
+            "version": _get_version(),
+            "fastmcp_version": _get_fastmcp_version(),
+            "uptime_seconds": round(uptime, 1),
+            "auth_type": auth_type,
+            "counts": {
+                "tools": len(tools),
+                "resources": len(resources),
+                "prompts": len(prompts),
+            },
+            "sources": _source_info,
+        }
     )
 
 
 async def api_tools(request: Request) -> JSONResponse:
     """List all registered tools with schemas."""
-    if not await _check_auth(request):
+    if not _check_auth(request):
         return _UNAUTHORIZED
     return JSONResponse(_extract_tools())
 
 
 async def api_resources(request: Request) -> JSONResponse:
     """List all registered resources."""
-    if not await _check_auth(request):
+    if not _check_auth(request):
         return _UNAUTHORIZED
     return JSONResponse(_extract_resources())
 
 
 async def api_prompts(request: Request) -> JSONResponse:
     """List all registered prompts."""
-    if not await _check_auth(request):
+    if not _check_auth(request):
         return _UNAUTHORIZED
     return JSONResponse(_extract_prompts())
 

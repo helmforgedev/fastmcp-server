@@ -14,7 +14,6 @@ import uvicorn
 from starlette.routing import Mount, Route
 
 from api import api_info, api_prompts, api_resources, api_tools, debug_info, init_api
-from authz import HttpAuthMiddleware
 from health import (
     healthz,
     mark_components_loaded,
@@ -230,34 +229,6 @@ def main() -> None:
         metrics_path = f"{base_path}/metrics"
         app.routes.append(Mount(metrics_path, get_metrics_app()))
         logger.info("Metrics endpoint enabled at %s", metrics_path)
-
-    protected_prefixes = [
-        f"{base_path}/debug/info",
-        f"{base_path}/api",
-        f"{base_path}/reload",
-    ]
-    if ui_enabled:
-        protected_prefixes.append(f"{base_path}/ui")
-    if metrics_enabled():
-        protected_prefixes.append(f"{base_path}/metrics")
-    app.add_middleware(HttpAuthMiddleware, protected_prefixes=protected_prefixes)
-
-    cors_origins = [
-        origin.strip()
-        for origin in os.environ.get("MCP_CORS_ALLOWED_ORIGINS", "").split(",")
-        if origin.strip()
-    ]
-    if cors_origins:
-        from starlette.middleware.cors import CORSMiddleware
-
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "Mcp-Session-Id"],
-            allow_credentials=True,
-        )
-        logger.info("CORS enabled for %d configured origin(s)", len(cors_origins))
 
     # Step 9: Start hot reload watcher if enabled
     start_watcher(mcp, workspace, rebuild_components)

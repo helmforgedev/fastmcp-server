@@ -8,77 +8,8 @@ Supports two formats via LOG_FORMAT environment variable:
 import json
 import logging
 import os
-import re
 import sys
 from datetime import datetime, timezone
-
-
-def _secret_values() -> list[str]:
-    values = []
-    for key in (
-        "MCP_AUTH_TOKEN",
-        "SOURCE_GIT_TOKEN",
-        "SOURCE_S3_ACCESS_KEY",
-        "SOURCE_S3_SECRET_KEY",
-        "SOURCE_OCI_PASSWORD",
-        "GITHUB_TOKEN",
-    ):
-        value = os.environ.get(key, "")
-        if value and len(value) >= 4:
-            values.append(value)
-    return values
-
-
-def redact(value):
-    """Redact known secrets and bearer credentials from log values."""
-    if not isinstance(value, str):
-        return value
-
-    redacted = value
-    for secret in _secret_values():
-        redacted = redacted.replace(secret, "[REDACTED]")
-    redacted = re.sub(
-        r"(https://)([^/\s:@]+:)?[^@\s/]+@",
-        r"\1[REDACTED]@",
-        redacted,
-    )
-    redacted = re.sub(
-        r"(Bearer\s+)[A-Za-z0-9._~+/=-]+",
-        r"\1[REDACTED]",
-        redacted,
-        flags=re.IGNORECASE,
-    )
-    return redacted
-
-
-class RedactingFilter(logging.Filter):
-    """Apply best-effort redaction before handlers render log records."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = redact(record.msg)
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {key: redact(value) for key, value in record.args.items()}
-            else:
-                record.args = tuple(redact(value) for value in record.args)
-        for key in (
-            "tool",
-            "source_file",
-            "request_id",
-            "source",
-            "component",
-            "client_id",
-            "trace_id",
-            "repo",
-            "branch",
-            "action",
-            "result",
-        ):
-            value = getattr(record, key, None)
-            if value is not None:
-                setattr(record, key, redact(value))
-        return True
 
 
 class JSONFormatter(logging.Formatter):
@@ -95,25 +26,13 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Add extra fields if present
-        for key in (
-            "tool",
-            "source_file",
-            "request_id",
-            "source",
-            "component",
-            "client_id",
-            "trace_id",
-            "repo",
-            "branch",
-            "action",
-            "result",
-        ):
+        for key in ("tool", "source_file", "request_id", "source", "component"):
             value = getattr(record, key, None)
             if value is not None:
-                log_entry[key] = redact(value)
+                log_entry[key] = value
 
         if record.exc_info and record.exc_info[0] is not None:
-            log_entry["exception"] = redact(self.formatException(record.exc_info))
+            log_entry["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(log_entry, default=str)
 
@@ -132,7 +51,6 @@ def configure_logging() -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(log_level)
-    handler.addFilter(RedactingFilter())
 
     if log_format == "json":
         handler.setFormatter(JSONFormatter())

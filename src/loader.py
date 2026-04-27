@@ -17,47 +17,11 @@ import fnmatch
 import logging
 import os
 import shutil
-import stat
-import sys
-import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 
 logger = logging.getLogger("fastmcp-server.loader")
 
 ASSET_DIRS = ["tools", "resources", "prompts", "knowledge"]
-DEFAULT_SENSITIVE_PATTERNS = [
-    "__pycache__",
-    "*.pyc",
-    "*.pyo",
-    "*.pyd",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".mypy_cache",
-    ".coverage",
-    "htmlcov",
-    ".ds_store",
-    "thumbs.db",
-    ".env",
-    "*.env",
-    "*.pem",
-    "*.key",
-    "*.p12",
-    "id_rsa",
-    "*secret*",
-]
-DEFAULT_KNOWLEDGE_EXTENSIONS = {
-    ".csv",
-    ".htm",
-    ".html",
-    ".json",
-    ".md",
-    ".txt",
-    ".xml",
-    ".yaml",
-    ".yml",
-}
-PYTHON_ASSET_DIRS = {"tools", "resources", "prompts"}
 
 
 def sync_sources(workspace: str) -> None:
@@ -95,7 +59,6 @@ def sync_sources(workspace: str) -> None:
 def _sync_git(workspace: Path) -> None:
     """Clone or pull a Git repository into the workspace."""
     import git
-    from authz import redact_secrets
 
     repo_url = os.environ.get("SOURCE_GIT_REPOSITORY", "")
     branch = os.environ.get("SOURCE_GIT_BRANCH", "main")
@@ -106,35 +69,25 @@ def _sync_git(workspace: Path) -> None:
         logger.warning("Git source enabled but SOURCE_GIT_REPOSITORY not set")
         return
 
-    _validate_git_source(repo_url, branch, subpath)
+    # Inject token into HTTPS URL if provided
+    if token and repo_url.startswith("https://"):
+        repo_url = repo_url.replace("https://", f"https://x-access-token:{token}@")
 
     clone_dir = workspace / ".git-source"
     if clone_dir.exists():
         shutil.rmtree(clone_dir)
 
-    logger.info("Cloning %s (branch: %s)...", redact_secrets(repo_url), branch)
-    try:
-        clone_env = os.environ.copy()
-        clone_env["GIT_TERMINAL_PROMPT"] = "0"
-        if token and repo_url.startswith("https://"):
-            with tempfile.TemporaryDirectory(prefix="fastmcp-git-auth-") as temp_dir:
-                clone_env["GIT_ASKPASS"] = _write_git_askpass(Path(temp_dir))
-                repo = git.Repo.clone_from(
-                    repo_url, str(clone_dir), branch=branch, depth=1, env=clone_env
-                )
-        else:
-            repo = git.Repo.clone_from(
-                repo_url, str(clone_dir), branch=branch, depth=1, env=clone_env
-            )
-    except Exception as exc:
-        safe_error = redact_secrets(str(exc))
-        logger.error("Git sync failed: %s", safe_error)
-        raise RuntimeError(f"Git sync failed: {safe_error}") from None
-
+    logger.info(
+        "Cloning %s (branch: %s)...", os.environ.get("SOURCE_GIT_REPOSITORY"), branch
+    )
+    repo = git.Repo.clone_from(repo_url, str(clone_dir), branch=branch, depth=1)
     logger.info("Git clone complete: %s", repo.head.commit.hexsha[:8])
 
-    source_root = _resolve_source_subpath(clone_dir, subpath)
-    _merge_into_workspace(workspace, source_root)
+    source_root = clone_dir / subpath if subpath else clone_dir
+
+    include = os.environ.get("SOURCE_GIT_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_GIT_EXCLUDE", "")
+    _merge_into_workspace(workspace, source_root, include=include, exclude=exclude)
 
 
 def _sync_s3(workspace: Path) -> None:
@@ -189,13 +142,15 @@ def _sync_s3(workspace: Path) -> None:
             count += 1
 
     logger.info("Downloaded %d file(s) from S3", count)
-    _merge_into_workspace(workspace, s3_dir)
+
+    include = os.environ.get("SOURCE_S3_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_S3_EXCLUDE", "")
+    _merge_into_workspace(workspace, s3_dir, include=include, exclude=exclude)
 
 
 def _sync_oci(workspace: Path) -> None:
     """Pull assets from an OCI registry via ORAS."""
     import subprocess
-    from authz import redact_secrets
 
     registry = os.environ.get("SOURCE_OCI_REGISTRY", "")
     tag = os.environ.get("SOURCE_OCI_TAG", "latest")
@@ -221,11 +176,14 @@ def _sync_oci(workspace: Path) -> None:
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        logger.error("OCI pull failed: %s", redact_secrets(result.stderr.strip()))
+        logger.error("OCI pull failed: %s", result.stderr.strip())
         return
 
     logger.info("OCI pull complete")
-    _merge_into_workspace(workspace, oci_dir)
+
+    include = os.environ.get("SOURCE_OCI_INCLUDE", "")
+    exclude = os.environ.get("SOURCE_OCI_EXCLUDE", "")
+    _merge_into_workspace(workspace, oci_dir, include=include, exclude=exclude)
 
 
 def _sync_inline(workspace: Path, inline_dir: Path) -> None:
@@ -234,7 +192,12 @@ def _sync_inline(workspace: Path, inline_dir: Path) -> None:
     _merge_into_workspace(workspace, inline_dir)
 
 
-def _merge_into_workspace(workspace: Path, source: Path) -> None:
+def _merge_into_workspace(
+    workspace: Path,
+    source: Path,
+    include: str = "",
+    exclude: str = "",
+) -> None:
     """Merge source directory into workspace, overwriting existing files.
 
     Expected source structure:
@@ -243,10 +206,10 @@ def _merge_into_workspace(workspace: Path, source: Path) -> None:
       source/prompts/*.py
       source/knowledge/*
 
+    Args:
+        include: Glob pattern for files to include (empty = all)
+        exclude: Glob pattern for files to exclude (empty = none)
     """
-    max_file_size = _env_int("MCP_MAX_SOURCE_FILE_SIZE_BYTES", 1_048_576)
-    max_knowledge_size = _env_int("MCP_MAX_KNOWLEDGE_BYTES", 10_485_760)
-
     for asset_dir in ASSET_DIRS:
         src = source / asset_dir
         if not src.is_dir():
@@ -256,143 +219,14 @@ def _merge_into_workspace(workspace: Path, source: Path) -> None:
             if item.is_file():
                 rel = item.relative_to(src)
                 rel_str = str(rel)
-                asset_rel = f"{asset_dir}/{rel_str}".replace("\\", "/")
 
-                if _is_blocked_source_file(asset_rel):
-                    logger.warning("Skipped blocked source file: %s", asset_rel)
+                # Apply include/exclude filters
+                if include and not fnmatch.fnmatch(rel_str, include):
                     continue
-                if not _is_allowed_asset_type(asset_dir, rel):
-                    logger.warning(
-                        "Skipped unsupported %s file: %s", asset_dir, rel_str
-                    )
+                if exclude and fnmatch.fnmatch(rel_str, exclude):
                     continue
-                if max_file_size > 0 and item.stat().st_size > max_file_size:
-                    logger.warning("Skipped oversized source file: %s", asset_rel)
-                    continue
-                if asset_dir == "knowledge" and max_knowledge_size > 0:
-                    current_size = _directory_size(dst)
-                    if current_size + item.stat().st_size > max_knowledge_size:
-                        logger.warning(
-                            "Skipped knowledge file over total limit: %s", asset_rel
-                        )
-                        continue
 
                 target = dst / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, target)
                 logger.debug("Merged: %s -> %s", rel, asset_dir)
-
-
-def _validate_git_source(repo_url: str, _branch: str, subpath: str) -> None:
-    """Validate Git source settings before clone."""
-    parsed = urlparse(repo_url)
-    if parsed.scheme not in {"https", "http", "ssh", "git"}:
-        raise ValueError("SOURCE_GIT_REPOSITORY must use https, http, ssh, or git.")
-
-    _validate_relative_path(subpath, "SOURCE_GIT_PATH")
-
-
-def _resolve_source_subpath(root: Path, subpath: str) -> Path:
-    """Resolve a configured source subpath and keep it under root."""
-    if not subpath:
-        return root
-    _validate_relative_path(subpath, "SOURCE_GIT_PATH")
-    resolved_root = root.resolve()
-    resolved_path = (root / subpath).resolve()
-    if not _is_relative_to(resolved_path, resolved_root):
-        raise ValueError("SOURCE_GIT_PATH must stay inside the cloned repository.")
-    return resolved_path
-
-
-def _validate_relative_path(value: str, name: str) -> None:
-    if not value:
-        return
-    path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"{name} must be a relative path without '..'.")
-
-
-def _write_git_askpass(directory: Path) -> str:
-    """Create a temporary askpass helper that reads credentials from env vars."""
-    if os.name == "nt":
-        script = directory / "git-askpass.cmd"
-        script.write_text(
-            "@echo off\n"
-            f'"{sys.executable}" -c '
-            "\"import os,sys; p=' '.join(sys.argv[1:]).lower(); "
-            "print(os.environ.get('SOURCE_GIT_USERNAME','x-access-token') "
-            "if 'username' in p else os.environ.get('SOURCE_GIT_TOKEN',''))\" %*\n",
-            encoding="utf-8",
-        )
-    else:
-        script = directory / "git-askpass.py"
-        script.write_text(
-            "#!/usr/bin/env python3\n"
-            "import os\n"
-            "import sys\n"
-            "prompt = ' '.join(sys.argv[1:]).lower()\n"
-            "if 'username' in prompt:\n"
-            "    print(os.environ.get('SOURCE_GIT_USERNAME', 'x-access-token'))\n"
-            "else:\n"
-            "    print(os.environ.get('SOURCE_GIT_TOKEN', ''))\n",
-            encoding="utf-8",
-        )
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return str(script)
-
-
-def _is_blocked_source_file(asset_rel: str) -> bool:
-    """Return True when a source file is sensitive."""
-    normalized = asset_rel.replace("\\", "/")
-    lower = normalized.lower()
-
-    parts = Path(lower).parts
-    name = Path(lower).name
-    for pattern in DEFAULT_SENSITIVE_PATTERNS:
-        if (
-            fnmatch.fnmatch(name, pattern)
-            or fnmatch.fnmatch(lower, pattern)
-            or any(fnmatch.fnmatch(part, pattern) for part in parts)
-        ):
-            return True
-    return False
-
-
-def _is_allowed_asset_type(asset_dir: str, rel: Path) -> bool:
-    if asset_dir in PYTHON_ASSET_DIRS:
-        return rel.suffix == ".py"
-    if asset_dir == "knowledge":
-        extensions = set(_csv_env("MCP_ALLOWED_KNOWLEDGE_EXTENSIONS"))
-        if not extensions:
-            extensions = DEFAULT_KNOWLEDGE_EXTENSIONS
-        extensions = {ext if ext.startswith(".") else f".{ext}" for ext in extensions}
-        return rel.suffix.lower() in extensions
-    return True
-
-
-def _csv_env(name: str) -> list[str]:
-    return [
-        item.strip() for item in os.environ.get(name, "").split(",") if item.strip()
-    ]
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except ValueError:
-        logger.warning("Invalid integer for %s; using %d", name, default)
-        return default
-
-
-def _directory_size(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
-
-
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False

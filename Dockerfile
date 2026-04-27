@@ -44,6 +44,6 @@ USER 1000
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:8000/healthz || exit 1
+    CMD curl -sf http://localhost:8000/mcp || exit 1
 
 ENTRYPOINT ["python", "/app/entrypoint.py"]

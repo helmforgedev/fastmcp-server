@@ -98,8 +98,8 @@ services:
       SOURCE_S3_ENABLED: "true"
       SOURCE_S3_ENDPOINT: http://minio:9000
       SOURCE_S3_BUCKET: mcp-tools
-      SOURCE_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      SOURCE_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      SOURCE_S3_ACCESS_KEY: minioadmin
+      SOURCE_S3_SECRET_KEY: minioadmin
 
   minio:
     image: docker.io/minio/minio:RELEASE.2025-04-03T14-56-28Z
@@ -108,8 +108,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
 ```
 
 ## Running with Git Source
@@ -123,16 +123,7 @@ docker run -d \
   docker.io/helmforge/fastmcp-server:0.4.0
 ```
 
-For private repos, set `SOURCE_GIT_TOKEN` with a personal access token. The token is passed to Git through a temporary askpass helper and is not embedded in the repository URL.
-
-For production, keep the server configuration small and put workflow policy in
-your MCP content/tools:
-
-```bash
-SOURCE_GIT_PATH=mcp
-MCP_MASK_ERROR_DETAILS=true
-MCP_DISABLE_TAGS=admin
-```
+For private repos, set `SOURCE_GIT_TOKEN` with a personal access token.
 
 ## Writing Tools
 
@@ -300,99 +291,6 @@ These become accessible as `knowledge://product-overview.md`, `knowledge://troub
 | Bearer | `MCP_AUTH_TYPE=bearer` + `MCP_AUTH_TOKEN` | API keys, service accounts |
 | JWT | `MCP_AUTH_TYPE=jwt` + `MCP_AUTH_JWT_*` | OAuth/OIDC, enterprise SSO |
 
-Authentication is split into three layers:
-
-- MCP client authentication: controls who can connect to this server.
-- Source authentication: controls how the server loads tools/resources/prompts from Git, S3, or OCI.
-- Tool authentication: controls how individual tools call external systems such as GitHub.
-
-`MCP_AUTH_TYPE=none` is intended only for local/dev. If `MCP_ENV` or `ENVIRONMENT` is `staging` or `production`, the server refuses to start with `none` unless `MCP_ALLOW_NO_AUTH=true` is set explicitly.
-
-The simplified runtime authenticates clients at the server level only. It does
-not enforce tool scopes, source repository allowlists, branch allowlists, source
-include/exclude filters, strict loading, or tool sandbox limits. Destructive
-tools marked with `destructiveHint` still require `human_approved=true` unless
-`MCP_REQUIRE_HUMAN_APPROVAL_FOR_DESTRUCTIVE=false`.
-
-## Production Hardening
-
-Recommended baseline for a public remote MCP server:
-
-```bash
-MCP_ENV=production
-MCP_AUTH_TYPE=bearer
-MCP_AUTH_TOKEN=<stored in your secret manager>
-MCP_AUTH_CLIENT_ID=<stable-client-id>
-MCP_MASK_ERROR_DETAILS=true
-MCP_METRICS_ENABLED=true
-LOG_FORMAT=json
-MCP_DISABLE_TAGS=admin
-```
-
-Security model:
-
-- Client auth protects MCP and protected HTTP routes.
-- Source credentials load content from Git, S3, or OCI and should be separate
-  from client auth.
-- Tool credentials such as `GITHUB_TOKEN` should exist only in the server runtime
-  that intentionally enables those tools.
-
-Secrets:
-
-- Store `MCP_AUTH_TOKEN`, `GITHUB_TOKEN`, `SOURCE_GIT_TOKEN`,
-  `SOURCE_S3_ACCESS_KEY`, `SOURCE_S3_SECRET_KEY`, and `SOURCE_OCI_PASSWORD`
-  outside Git.
-- Do not place secrets in inline content, knowledge files, tool files, examples,
-  or PR comments.
-- Diagnostics and logs redact known secret env values, bearer headers, and
-  token-bearing URLs, but redaction is defense-in-depth rather than permission to
-  log secrets.
-
-Deployment notes:
-
-- The image runs as non-root `USER 1000`.
-- The Docker healthcheck calls `/healthz`.
-- `/readyz` should be used for readiness, because it waits for sources and
-  components to load.
-- `/debug/info`, `/api/*`, `/ui`, `/metrics`, and `/reload` are protected by
-  the same auth policy.
-- Set `MCP_CORS_ALLOWED_ORIGINS` only when an external browser UI needs it; keep
-  it empty otherwise.
-- Leave `EXTRA_PIP_PACKAGES` empty in production unless packages are pinned and
-  trusted.
-
-### Hardened Compose Example
-
-```yaml
-services:
-  mcp-server:
-    image: docker.io/helmforge/fastmcp-server:0.4.0
-    ports:
-      - "8000:8000"
-    environment:
-      MCP_ENV: production
-      MCP_SERVER_NAME: helmforge
-      MCP_PATH: /helmforge/mcp
-      MCP_AUTH_TYPE: bearer
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
-      MCP_AUTH_CLIENT_ID: maicon-berlofa
-      MCP_MASK_ERROR_DETAILS: "true"
-      MCP_METRICS_ENABLED: "true"
-      LOG_FORMAT: json
-      SOURCE_S3_ENABLED: "true"
-      SOURCE_S3_BUCKET: ${SOURCE_S3_BUCKET}
-      SOURCE_S3_ENDPOINT: ${SOURCE_S3_ENDPOINT}
-      SOURCE_S3_REGION: ${SOURCE_S3_REGION}
-      SOURCE_S3_PREFIX: helmforge
-      SOURCE_S3_ACCESS_KEY: ${SOURCE_S3_ACCESS_KEY}
-      SOURCE_S3_SECRET_KEY: ${SOURCE_S3_SECRET_KEY}
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-```
-
 ## Web UI
 
 The embedded dashboard at `/ui` provides:
@@ -447,47 +345,33 @@ Set `LOG_FORMAT=json` for JSON-structured logs compatible with Loki, ELK, CloudW
 
 ## Environment Variables
 
-See [.env.example](.env.example) for a copyable full environment template with
-every supported variable, defaults, and placeholder values for secrets.
-
 ### Server
 
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_SERVER_NAME` | `fastmcp-server` | Server display name |
-| `MCP_SERVER_VERSION` | `0.4.0` | Server version returned by diagnostics APIs |
 | `MCP_HOST` | `0.0.0.0` | Listen address |
 | `MCP_PORT` | `8000` | Listen port |
 | `MCP_PATH` | `/mcp` | HTTP endpoint path |
 | `MCP_WORKSPACE` | `/app/workspace` | Workspace directory |
-| `MCP_ENV` / `ENVIRONMENT` / `APP_ENV` | `dev` | Deployment environment; `staging`, `prod`, and `production` require explicit no-auth opt-out |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `MCP_MASK_ERROR_DETAILS` | `false`, `true` in production/staging | Hide internal error details from clients |
+| `MCP_MASK_ERROR_DETAILS` | `false` | Hide internal error details from clients |
 | `MCP_ON_DUPLICATE_TOOLS` | `warn` | Duplicate handling: `warn`, `error`, `replace`, `ignore` |
+| `MCP_STRICT_LOADING` | `false` | Fail on boot if any tool/resource has errors |
 | `MCP_UI_ENABLED` | `true` | Enable built-in Web UI at `/ui` |
 | `MCP_METRICS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
-| `MCP_CORS_ALLOWED_ORIGINS` | | Comma-separated CORS origins for external UI clients |
-| `MCP_MAX_SOURCE_FILE_SIZE_BYTES` | `1048576` | Maximum size for any loaded source file; `0` disables |
-| `MCP_MAX_KNOWLEDGE_BYTES` | `10485760` | Maximum total loaded knowledge size; `0` disables |
-| `MCP_ALLOWED_KNOWLEDGE_EXTENSIONS` | `.md,.txt,.json,.yaml,.yml,.html,.htm,.csv,.xml` | Comma-separated extensions allowed under `knowledge/` |
 | `EXTRA_PIP_PACKAGES` | | Comma-separated pip packages to install at startup |
 
 ### Authentication
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_AUTH_TYPE` | `none` | `bearer`, `jwt`, `multi`, or `none` |
-| `MCP_ALLOW_NO_AUTH` | `false` | Explicitly allow `MCP_AUTH_TYPE=none` in production-like environments |
+| `MCP_AUTH_TYPE` | `none` | `bearer`, `jwt`, or `none` |
 | `MCP_AUTH_TOKEN` | | Bearer token value |
-| `MCP_AUTH_CLIENT_ID` | `bearer-user` | Client ID used for bearer-token audit logs |
 | `MCP_AUTH_JWT_ISSUER` | | JWT issuer |
 | `MCP_AUTH_JWT_AUDIENCE` | | JWT audience |
 | `MCP_AUTH_JWT_JWKS_URI` | | JWKS endpoint URL |
-| `MCP_AUTH_JWT_PUBLIC_KEY` | | JWT public key or HS* shared secret |
-| `MCP_AUTH_JWT_ALGORITHM` | | JWT algorithm, for example `RS256` or `HS256` |
-| `MCP_AUTH_PROVIDERS` | | Comma-separated providers for `MCP_AUTH_TYPE=multi`, for example `bearer,jwt` |
-| `MCP_REQUIRE_HUMAN_APPROVAL_FOR_DESTRUCTIVE` | `true` | Require `human_approved=true` for destructive tools |
 
 ### S3 Source
 
@@ -500,7 +384,6 @@ every supported variable, defaults, and placeholder values for secrets.
 | `SOURCE_S3_PREFIX` | | Key prefix filter |
 | `SOURCE_S3_ACCESS_KEY` | | Access key ID |
 | `SOURCE_S3_SECRET_KEY` | | Secret access key |
-| `SOURCE_S3_SYNC_INTERVAL` | `0` | Periodic S3 sync interval in seconds; `0` disables background sync |
 
 ### Git Source
 
@@ -511,51 +394,6 @@ every supported variable, defaults, and placeholder values for secrets.
 | `SOURCE_GIT_BRANCH` | `main` | Branch to clone |
 | `SOURCE_GIT_PATH` | | Subdirectory within the repo |
 | `SOURCE_GIT_TOKEN` | | Auth token for private repos |
-| `SOURCE_GIT_USERNAME` | `x-access-token` | Username used by the temporary Git askpass helper |
-| `SOURCE_GIT_SYNC_INTERVAL` | `0` | Periodic Git sync interval in seconds; `0` disables background sync |
-
-Sensitive files are skipped by default from all sources: `.env`, `*.env`, `*.pem`, `*.key`, `*.p12`, `id_rsa`, and filenames containing `secret`. Tool, resource, and prompt directories accept only Python files by default. Knowledge files are restricted by extension and total size.
-
-### OCI Source
-
-| Variable | Default | Description |
-|---|---|---|
-| `SOURCE_OCI_ENABLED` | `false` | Enable OCI artifact sync |
-| `SOURCE_OCI_REGISTRY` | | OCI artifact reference without tag |
-| `SOURCE_OCI_TAG` | `latest` | OCI artifact tag |
-| `SOURCE_OCI_USERNAME` | | Registry username |
-| `SOURCE_OCI_PASSWORD` | | Registry password |
-
-### Inline Source
-
-| Variable | Default | Description |
-|---|---|---|
-| `SOURCE_INLINE_DIR` | `/app/inline` | Directory copied into the workspace during startup |
-| `MCP_HOT_RELOAD` | `false` | Watch `SOURCE_INLINE_DIR` for `.py` changes and rebuild components automatically |
-
-### Gateway
-
-| Variable | Default | Description |
-|---|---|---|
-| `MCP_MODE` | `server` | Set to `gateway` to mount remote MCP servers |
-| `MCP_MOUNT_SERVERS` | | JSON array of `{name, url, namespace}` mount definitions |
-
-### Visibility
-
-| Variable | Default | Description |
-|---|---|---|
-| `MCP_ENABLE_TAGS` | | Comma-separated allowlist of tags to expose |
-| `MCP_DISABLE_TAGS` | | Comma-separated blocklist of tags to hide |
-| `MCP_VISIBILITY_MODE` | `blocklist` | Visibility strategy: `blocklist` or `allowlist` |
-
-### Rate Limiting and Cache
-
-| Variable | Default | Description |
-|---|---|---|
-| `MCP_RATE_LIMIT_DEFAULT` | | Global tool rate limit, for example `100/min` |
-| `MCP_RATE_LIMIT_<TOOL_NAME>` | | Per-tool override using the uppercased tool name, for example `MCP_RATE_LIMIT_DEPLOY=5/min` |
-| `MCP_CACHE_ENABLED` | `true` | Enable tool-result caching for tools configured with cache support |
-| `MCP_CACHE_MAX_SIZE` | `1000` | Maximum cache entries per tool |
 
 ## Init Container Pattern
 
