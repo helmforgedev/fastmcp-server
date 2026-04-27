@@ -1,5 +1,6 @@
 # fastmcp-server
 
+[![SafeSkill 50/100](https://img.shields.io/badge/SafeSkill-50%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/helmforgedev-fastmcp-server)
 Production-ready [FastMCP](https://gofastmcp.dev) server image with dynamic loading of tools, resources, prompts, and knowledge bases from multiple sources.
 
 Run your own MCP server anywhere — Docker, Compose, Swarm, Kubernetes, or any container runtime. Define tools in Python, mount them, and your server is live.
